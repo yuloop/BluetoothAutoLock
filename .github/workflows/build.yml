@@ -25,11 +25,22 @@ jobs:
           if ($hits) { $hits | ForEach-Object { Write-Host $_ }; Write-Error "Potential secret found in repo"; exit 1 }
           Write-Host "Secret scan passed"
 
+      - name: Diagnose SDK
+        shell: pwsh
+        run: |
+          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\UnionMetadata" -Directory -ErrorAction SilentlyContinue | Format-Table Name
+          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\UnionMetadata\*\Windows.winmd" -ErrorAction SilentlyContinue | Select-Object FullName | Format-List
+          Get-ChildItem "C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework" -Directory -ErrorAction SilentlyContinue | Format-Table Name
+
       - name: Build with csc.exe (no SDK required)
         shell: cmd
         run: |
           call scripts\build.cmd
-          if errorlevel 1 exit /b 1
+          if errorlevel 1 (
+            echo [workflow] build.cmd failed, trying fallback diagnostic
+            dir "C:\Program Files (x86)\Windows Kits\10\UnionMetadata" /s /b 2>nul | findstr Windows.winmd
+            exit /b 1
+          )
           dir build
           if not exist build\BluetoothAutoLock.exe (
             echo BluetoothAutoLock.exe not found
