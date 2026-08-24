@@ -168,7 +168,7 @@ Start-ScheduledTask -TaskName 'BluetoothAutoLock'    # start now without re-logo
 Get-Content -Wait 'C:\ProgramData\BluetoothAutoLock\service.log'   # tail logs
 ```
 
-A normal log looks like:
+A normal log example:
 
 ```
 [2026-05-07 19:02:10.221] [INFO ] Starting BluetoothAutoLock 1.1.6 | Config(...)
