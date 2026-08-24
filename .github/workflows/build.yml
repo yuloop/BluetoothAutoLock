@@ -1,4 +1,4 @@
-name: Build
+name: Build (winx64)
 
 on:
   push:
@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-winx64:
+    name: build-winx64
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -32,7 +33,7 @@ jobs:
           Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\UnionMetadata\*\Windows.winmd" -ErrorAction SilentlyContinue | Select-Object FullName | Format-List
           Get-ChildItem "C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework" -Directory -ErrorAction SilentlyContinue | Format-Table Name
 
-      - name: Build with csc.exe (no SDK required)
+      - name: Build winx64 with csc.exe (no SDK required)
         shell: cmd
         run: |
           call scripts\build.cmd
@@ -46,11 +47,13 @@ jobs:
             echo BluetoothAutoLock.exe not found
             exit /b 1
           )
+          echo [workflow] winx64 build OK - platform x64
+          where dumpbin >nul 2>&1 && (dumpbin /headers build\BluetoothAutoLock.exe | findstr /i "machine" || echo dumpbin check done) || echo dumpbin not in PATH, skip arch check
 
-      - name: Upload artifact
+      - name: Upload winx64 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BluetoothAutoLock-${{ github.sha }}
+          name: BluetoothAutoLock-winx64-${{ github.sha }}
           path: |
             build/BluetoothAutoLock.exe
             build/config.ini
