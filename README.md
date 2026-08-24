@@ -1,182 +1,170 @@
 # BluetoothAutoLock
 
-[English](README.md) | [中文](README.zh-CN.md)
-
 ![Build](https://github.com/yuloop/BluetoothAutoLock/actions/workflows/build.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
 
-Lightweight Windows tray application that locks the workstation only after the
-configured Bluetooth key is absent and the user has also been idle for the
-configured threshold.
+轻量级 Windows 托盘程序：仅当配置的蓝牙钥匙离开且用户同时已空闲达到阈值时，才自动锁屏。
 
-> **Security**: `GameProblemMonitorAiApiKey` is empty by default. **Never commit a real key** — use env var `ARK_API_KEY` instead. `Config.Save()` never persists the plaintext key.
+- 系统托盘常驻，带图形化配置窗口 — 日常使用无需命令行
+- 面向 .NET Framework 4.x — Windows 10 LTSC 2021 开箱即用
+- 通过 Windows 任务计划实现开机自启与崩溃自动重启
+- 配置持久化到 `config.ini` 纯文本（支持手写编辑）
+- 单文件 `.exe` 约 90 KB，仅依赖 Win32 + WinForms，无第三方 DLL
 
-- System-tray app with a configuration dialog — no command line needed for daily use.
-- Targets .NET Framework 4.x — runs out of the box on Windows 10 LTSC 2021.
-- Auto-start on logon and auto-restart on crash via Windows Task Scheduler.
-- Settings persist to a plain `config.ini` (also editable by hand).
-- Single-file `.exe`, ~90 KB, only Win32 + WinForms — no third-party DLLs.
+> **安全提示**：AI 异常分析的 API Key（`GameProblemMonitorAiApiKey`）默认为空。**严禁提交真实 Key 到 Git**，请通过环境变量 `ARK_API_KEY` 注入，或在本地私密 `config.ini` 中临时填写。`Config.Save()` 默认不再落地明文 Key，仅驻留内存。
 
-## Why not Windows Dynamic Lock alone?
+## 为什么不用 Windows 动态锁？
 
-Windows' built-in Dynamic Lock waits ~30 s after the Bluetooth signal weakens
-and offers no tuning. This program lets you pick the exact absent+idle
-threshold (e.g. 300 s / 5 min) and blocks locking while either the Bluetooth
-key is detected or keyboard/mouse input shows you are still using the PC.
+Windows 自带的动态锁在蓝牙信号变弱后约 30 秒就锁，且不可调。本程序可自定义“离开 + 空闲”双重阈值（例如 300 秒 / 5 分钟），且只要检测到蓝牙钥匙或键盘/鼠标活动，就不会锁屏。
 
-## Layout
+## 目录结构
 
 ```
 BluetoothAutoLock/
-├── src/                 # C# sources
+├── src/                 # C# 源码
 │   ├── Program.cs
-│   ├── TrayApp.cs           # NotifyIcon + right-click menu
-│   ├── SettingsForm.cs      # configuration dialog
-│   ├── BluetoothMonitor.cs  # poll loop + state machine
-│   ├── LolOptimizer.cs      # LoL game-mode WSL/display/remote-app optimizer
-│   ├── GameEnvironmentOptimizer.cs # one-click game-env cleanup + anomaly monitor/AI analysis
-│   ├── Config.cs            # INI load/save (round-trip preserves comments)
-│   ├── Logger.cs            # thread-safe file logger with rotation
+│   ├── TrayApp.cs           # 托盘图标与右键菜单
+│   ├── SettingsForm.cs      # 配置窗口
+│   ├── BluetoothMonitor.cs  # 轮询与状态机
+│   ├── LolOptimizer.cs      # LoL 游戏模式 WSL/显示器/远程软件优化
+│   ├── GameEnvironmentOptimizer.cs # 一键游戏环境清理 + 异常监控/AI 分析
+│   ├── Config.cs            # INI 加载/保存（保留注释回写）
+│   ├── Logger.cs            # 线程安全日志与轮转
 │   └── NativeMethods.cs     # Win32 P/Invoke
 ├── scripts/
-│   ├── build.cmd        # compile with built-in csc.exe (no SDK needed)
-│   ├── install.ps1      # register Scheduled Task (logon trigger)
-│   └── uninstall.ps1    # remove Scheduled Task
+│   ├── build.cmd        # 调用系统自带 csc.exe 编译，无需 SDK
+│   ├── install.ps1      # 注册开机任务
+│   └── uninstall.ps1    # 移除任务
 ├── config/
-│   └── config.ini       # default config template
-└── build/               # output: BluetoothAutoLock.exe + config.ini
+│   └── config.ini       # 默认配置模板（Key 留空）
+└── build/               # 产物：BluetoothAutoLock.exe + config.ini
 ```
 
-## Build
+## 编译
 
 ```cmd
 cd D:\xiangmudata\win_bluetooth_auto_scan_lock_on_disconnect
 .\scripts\build.cmd
 ```
 
-Output: `build\BluetoothAutoLock.exe` + `build\config.ini`.
+产物：`build\BluetoothAutoLock.exe` + `build\config.ini`。
 
-The build script invokes `C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`
-which ships with every Windows 10 install. **No .NET SDK, MSBuild, or NuGet
-required.**
+编译脚本调用 `C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`，该文件随 Windows 10 自带，**无需安装 .NET SDK / MSBuild / NuGet**。
 
-## Configure (GUI)
+> GitHub Actions 已配置自动编译：每次 `push` / `pull_request` 到 `main` 分支，`windows-latest` Runner 会执行 `.\scripts\build.cmd` 并上传 `BluetoothAutoLock.exe` 为 Artifact。
 
-Just run the program — it lives in the system tray.
+## 图形化配置
+
+直接运行即可，程序常驻托盘：
 
 ```cmd
 .\build\BluetoothAutoLock.exe
 ```
 
-A shield icon appears in the notification area. **Right-click** for the menu,
-or **double-click** to open Settings:
+通知区出现盾牌图标，**右键**打开菜单，**双击**打开设置窗口。
 
-![Settings dialog](build/settings-dialog.png)
+设置窗口包含：
 
-The settings dialog shows:
+| 字段 | 说明 |
+|------|------|
+| **目标设备** | 已配对蓝牙设备下拉，带 `[已连接]` / `[已配对]` 标记，点 **刷新** 重新扫描 |
+| **蓝牙离开阈值** | 键盘/鼠标空闲 30 秒后，蓝牙钥匙持续离开多少秒才锁屏 1–3600 |
+| **最终复检次数** | 锁屏前最终蓝牙复检次数，默认 3 |
+| **轮询随机下限** | 最小轮询间隔，实际间隔为该值到 +7 秒随机，默认 8 即 8–15 秒 |
+| **锁屏快捷键** | 锁屏前按序触发的可选快捷键，可备注 |
+| **日志级别** | `Debug` / `Info` / `Warn` / `Error` |
+| **日志路径** | 日志文件位置，父目录自动创建 |
+| **LoL 游戏优化** | 可选：检测到 LoL 启动时，游戏前一次性回收 WSL 缓存、可选禁用虚拟显示器、可选关闭 AskLink / ToDesk，游戏静默 10 分钟后静默恢复 |
 
-| Field                  | Notes                                                                     |
-|------------------------|---------------------------------------------------------------------------|
-| **Target device**      | Drop-down of all paired Bluetooth devices, with `[connected]` / `[paired]` markers. Click **Refresh** to re-scan. |
-| **Bluetooth absence threshold** | After keyboard/mouse has been idle for 30s, seconds the Bluetooth key must remain absent before locking. 1 – 3600. |
-| **Final recheck attempts** | Number of Bluetooth rechecks immediately before locking. Default 3.       |
-| **Polling random lower bound** | Minimum poll interval. Actual interval is randomized from this value through +7 seconds; default 8 means 8–15s. |
-| **Lock shortcuts**     | Optional shortcuts triggered in order immediately before locking; each shortcut can have a note. |
-| **Log level**          | `Debug` / `Info` / `Warn` / `Error`.                                      |
-| **Log path**           | Where to write the log file. Parent directory is auto-created.            |
-| **LoL game optimization** | Optional: when the LoL process starts, reclaim WSL cache once before the game, optionally disable a virtual display, and optionally close AskLink / ToDesk until the game has been quiet for 10 minutes, then restore those apps with a restore-only minimized/tray-silent startup. |
+点 **保存** — 配置写入 exe 旁的 `config.ini` 并立即重启监控。
 
-Click **Save** — settings are written to `config.ini` next to the exe and the
-monitor restarts immediately.
+托盘菜单还提供：
+- **状态：…** — 当前状态（已连接 / 蓝牙丢失但使用中 / 已锁 / 已暂停 等）
+- **设置…** — 打开配置窗口，含实时状态/日志面板
+- **暂停/恢复监控** — 临时禁用蓝牙/空闲锁屏（如演示时）
+- **智能优化游戏环境（游戏前运行）** — 仅在异常时清理 LOL 卡顿总结中的 node/omx/python 残留组或 LoL 崩溃残留
+- **启用/禁用游戏环境异常监控** — 5 分钟后台分析，仅严重残留、崩溃、疑似死循环托盘提醒
+- **打开日志目录**
+- **关于 / 退出**
 
-The tray menu also exposes:
-- **Status: …** — shows the current state (Connected / Bluetooth missing but in use / Locked / Paused / etc).
-- **Settings…** — open the dialog. The dialog includes a realtime status/log panel with current state, status timestamp, and next action.
-- **Pause / Resume monitoring** — temporarily disable Bluetooth/idle locking (e.g. while presenting).
-- **智能优化游戏环境（游戏前运行）** — checks the LOL lag-summary patterns and cleans only abnormal node/omx/python zombie groups or LoL crash/client residue.
-- **Enable / disable game environment anomaly monitor** — 5-minute background analysis with log output and severe-only tray alerts.
-- **Open log folder** — opens Explorer at the log file.
-- **About / Quit**.
+## 文本配置
 
-## Configure (file)
+也可直接编辑 `build\config.ini`：
 
-If you prefer text, edit `build\config.ini` directly:
+| 键 | 默认 | 说明 |
+|----|------|------|
+| `DeviceName` | _(空)_ | 选中设备显示名，仅作展示 |
+| `DeviceAddress` | _(空)_ | 必填，Classic 蓝牙 MAC `AA:BB:CC:DD:EE:FF`，仅用此 ID 判近 |
+| `DisconnectDelaySeconds` | `150` | 空闲 30 秒后，持续离开多少秒才锁，150=2.5 分钟 1–3600 |
+| `DisconnectConfirmSeconds` | `3` | 锁前最终复检次数 1–10 |
+| `PollingIntervalSeconds` | `8` | 最小轮询间隔，实际为该值到 +7 秒随机 1–60 |
+| `LogPath` | `C:\ProgramData\BluetoothAutoLock\service.log` | 日志路径 |
+| `LogLevel` | `Info` | `Debug`/`Info`/`Warn`/`Error` |
+| `MaxLogSizeMB` | `5` | 超过则轮转到 `<name>.log.1` |
+| `LockShortcutSettleMilliseconds` | `3000` | 触发快捷键后等待多久再锁屏 0–10000 |
+| `LockShortcut1` 等 | _(空)_ | 锁前按序触发 `Ctrl+Alt+K\|备注` |
+| `LolOptimizerEnabled` | `false` | 启用 LoL 游戏模式自动化 |
+| `LolProcessName` | `League of Legends` | LoL 进程名（不含 .exe） |
+| `VirtualDisplayDeviceId` | _(空)_ | 游戏时禁用的显示设备实例 ID |
+| `LolOptimizerPollSeconds` | `3` | 检测 LoL 启动轮询 1–60 |
+| `LolWslOptimizeEnabled` | `true` | 每次 LoL 会话前一次性回收 WSL 缓存 |
+| `WslDistro` | `Ubuntu` | `drop_caches` 使用的 WSL 发行版 |
+| `LolAutoCloseRemoteEnabled` | `true` | 游戏时关闭远程软件 |
+| `RemoteCloseProcessNames` | `AskLink,ToDesk` | 需关闭的进程名，仅重启本程序确实关闭且游戏前已运行的实例 |
+| `RemoteRestartQuietMinutes` | `10` | LoL 退出后静默多久再恢复远程软件 |
+| `GameProblemMonitorEnabled` | `true` | 启用 5 分钟游戏环境异常监控 |
+| `GameProblemMonitorIntervalMinutes` | `5` | 后台分析间隔 |
+| `GameProblemMonitorAiEnabled` | `true` | 仅本地规则发现候选后才调 AI |
+| `GameProblemMonitorAiEndpoint` | `https://ark.cn-beijing.volces.com/api/v3/responses` | Ark Responses 接口 |
+| `GameProblemMonitorAiModel` | `doubao-seed-2-0-lite-260215` | 异常判定模型 |
+| `GameProblemMonitorAiApiKey` | _(空)_ | **留空**，请用环境变量 `ARK_API_KEY` 注入，切勿提交 |
+| `GameProblemMonitorAiApiKeyEnv` | `ARK_API_KEY` | 读取 Key 的环境变量名 |
+| `GameProblemNotifyRepeatMinutes` | `30` | 重复托盘通知抑制窗口 |
+| `GameProblemRunawayCpuPercent` | `90` | 疑似死循环单核 CPU 阈值，需连续命中才提醒 |
+| `GameOptimizerToolZombieCountThreshold` | `20` | node/omx 僵尸组数量阈值 |
+| `GameOptimizerToolZombieMemoryMB` | `2048` | 异常内存阈值 |
+| `GameOptimizerLolRenderCountThreshold` | `2` | `LeagueClientUxRender` 超此数视为残留 |
+| `GameOptimizerToolCleanupProcessNames` | `node,omx-node-stdio-hidden,python` | 一键清理候选进程名 |
+| `GameOptimizerLolCleanupProcessNames` | `LeagueCrashHandler64,LeagueClientUxRender,LeagueClient,League of Legends,RiotClientServices` | LoL 残留清理列表 |
 
-| Key                       | Default                                              | Description                                                          |
-|---------------------------|------------------------------------------------------|----------------------------------------------------------------------|
-| `DeviceName`              | _(empty)_                                            | Display label saved from the selected device; not used for proximity matching. |
-| `DeviceAddress`           | _(empty)_                                            | Required unique Classic Bluetooth MAC `AA:BB:CC:DD:EE:FF`; proximity matching uses this ID only. |
-| `DisconnectDelaySeconds`  | `150`                                                | After keyboard/mouse has been idle for 30s, required continuous Bluetooth-absence seconds before locking. 150 = 2.5 minutes. 1–3600. |
-| `DisconnectConfirmSeconds`| `3`                                                  | Final Bluetooth recheck attempts before locking. Any successful final probe cancels the lock. 1–10. |
-| `PollingIntervalSeconds`  | `8`                                                  | Minimum poll interval; actual interval is randomized from this value through +7 seconds. Default 8 means 8–15s. 1–60. |
-| `LogPath`                 | `C:\ProgramData\BluetoothAutoLock\service.log`       | Log file path.                                                       |
-| `LogLevel`                | `Info`                                               | `Debug`, `Info`, `Warn`, `Error`.                                    |
-| `MaxLogSizeMB`            | `5`                                                  | Rotate to `<name>.log.1` when exceeded.                              |
-| `LockShortcutSettleMilliseconds` | `3000` | Wait time after triggering lock shortcuts before locking, giving global hotkey handlers time to run. 0–10000. |
-| `LockShortcut1`, `LockShortcut2`, ... | _(empty)_ | Optional shortcuts triggered in order before locking. Format: `Ctrl+Alt+K|note`; notes are shown in Settings and logs. |
-| `LolOptimizerEnabled`     | `false`                                              | Enable LoL game-mode automation.                                     |
-| `LolProcessName`          | `League of Legends`                                  | LoL process name without `.exe`.                                     |
-| `VirtualDisplayDeviceId`  | _(empty)_                                            | Optional display device instance ID to disable during LoL and restore after exit. |
-| `LolOptimizerPollSeconds` | `3`                                                  | Poll interval for detecting LoL start. 1–60.                         |
-| `LolWslOptimizeEnabled`   | `true`                                               | Reclaim WSL cache once before each LoL session; does not limit WSL CPU. |
-| `WslDistro`               | `Ubuntu`                                             | WSL distro used for `drop_caches`.                                   |
-| `LolAutoCloseRemoteEnabled` | `true`                                             | If enabled, close configured remote apps at LoL start.               |
-| `RemoteCloseProcessNames` | `AskLink,ToDesk`                                     | Process names to close; only successfully closed, pre-running apps are restarted. |
-| `RemoteRestartQuietMinutes` | `10`                                               | After LoL exits, wait this many quiet minutes with no LoL process before restarting closed remote apps; the restart path requests minimized/tray-silent startup only for this app-managed restore. |
-| `GameProblemMonitorEnabled` | `true` | Enable 5-minute game-environment anomaly monitoring. |
-| `GameProblemMonitorIntervalMinutes` | `5` | Background analysis interval. |
-| `GameProblemMonitorAiEnabled` | `true` | Use AI only after local rules find anomaly candidates. |
-| `GameProblemMonitorAiEndpoint` | `https://ark.cn-beijing.volces.com/api/v3/responses` | Ark Responses API endpoint. |
-| `GameProblemMonitorAiModel` | `doubao-seed-2-0-lite-260215` | AI model used for anomaly judgement. |
-| `GameProblemMonitorAiApiKey` | _(empty)_ | Optional API key; alternatively set `GameProblemMonitorAiApiKeyEnv`. |
-| `GameProblemMonitorAiApiKeyEnv` | `ARK_API_KEY` | Environment variable fallback for the API key. |
-| `GameProblemNotifyRepeatMinutes` | `30` | Duplicate tray notification suppression window. |
-| `GameProblemRunawayCpuPercent` | `90` | Single-core CPU threshold for suspected runaway loops; notification requires consecutive hits. |
-| `GameOptimizerToolZombieCountThreshold` | `20` | node/omx zombie-group count threshold from the LOL lag summary. |
-| `GameOptimizerToolZombieMemoryMB` | `2048` | node/omx/python abnormal memory threshold. |
-| `GameOptimizerLolRenderCountThreshold` | `2` | `LeagueClientUxRender` count above this is treated as residue. |
-| `GameOptimizerToolCleanupProcessNames` | `node,omx-node-stdio-hidden,python` | Process names eligible for one-click cleanup when that group is abnormal. |
-| `GameOptimizerLolCleanupProcessNames` | `LeagueCrashHandler64,LeagueClientUxRender,LeagueClient,League of Legends,RiotClientServices` | LoL residue cleanup list. |
+图形界面的 **保存** 会保留文件既有注释，手写与 GUI 编辑可共存。
 
-The GUI's **Save** button preserves any existing comments in the file —
-hand edits and GUI edits coexist cleanly.
-
-## Install (auto-start + auto-restart)
+## 安装（开机自启 + 崩溃重启）
 
 ```powershell
-# current user only (no admin needed)
+# 仅当前用户（无需管理员）
 .\scripts\install.ps1
 
-# system-wide (any user logon, requires admin PowerShell)
+# 全用户（所有用户登录均触发，需管理员 PowerShell）
 .\scripts\install.ps1 -Scope AllUsers
 ```
 
-This registers a Scheduled Task named `BluetoothAutoLock` with:
+注册名为 `BluetoothAutoLock` 的计划任务：
 
-- **Trigger:** at logon
-- **Action:** run `build\BluetoothAutoLock.exe` (tray app)
-- **Window:** hidden (tray-only)
-- **Restart on failure:** every 1 minute, up to 999 retries
-- **Battery:** allowed to start and stay running on battery
+- **触发器：** 登录时
+- **动作：** 运行 `build\BluetoothAutoLock.exe`（托盘）
+- **窗口：** 隐藏（仅托盘）
+- **失败重启：** 每 1 分钟重试，最多 999 次
+- **电源：** 允许在电池模式下启动与运行
 
-The script is idempotent — re-running it stops and replaces the existing task.
+脚本幂等 — 重复执行会停止并替换旧任务。
 
-## Uninstall
+## 卸载
 
 ```powershell
 .\scripts\uninstall.ps1
 ```
 
-## Verify
+## 验证
 
 ```powershell
-Get-ScheduledTask -TaskName 'BluetoothAutoLock'      # task registered?
-Start-ScheduledTask -TaskName 'BluetoothAutoLock'    # start now without re-logon
-Get-Content -Wait 'C:\ProgramData\BluetoothAutoLock\service.log'   # tail logs
+Get-ScheduledTask -TaskName 'BluetoothAutoLock'      # 是否已注册？
+Start-ScheduledTask -TaskName 'BluetoothAutoLock'    # 立即启动（无需注销）
+Get-Content -Wait 'C:\ProgramData\BluetoothAutoLock\service.log'   # 实时日志
 ```
 
-A normal log example:
+正常日志示例：
 
 ```
 [2026-05-07 19:02:10.221] [INFO ] Starting BluetoothAutoLock 1.1.6 | Config(...)
@@ -186,75 +174,48 @@ A normal log example:
 [2026-05-09 19:17:25.811] [INFO ] Target absent for at least 150s after keyboard/mouse idle threshold and no input occurred; locking workstation.
 ```
 
-## CLI flags (advanced / scripting)
+## 命令行参数（高级/脚本）
 
-The tray app is the default, but a few flags are useful for diagnostics or scripts:
+托盘是默认模式，下列参数用于诊断：
 
-| Flag              | Behavior                                                                  |
-|-------------------|---------------------------------------------------------------------------|
-| _(none)_          | Run the tray app.                                                         |
-| `--config`        | Open just the settings dialog (no tray, no monitor).                      |
-| `--list` / `-l`   | Print all paired devices and exit.                                        |
-| `--once`          | Single check pass, then exit (diagnostic).                                |
-| `--test-lock-shortcuts` | Trigger configured lock shortcuts only, then exit. No settings window and no workstation lock. |
-| `--version`/`-v`  | Print version and exit.                                                   |
-| `--help` / `-h`   | Show usage.                                                               |
+| 参数 | 行为 |
+|------|------|
+| _(无)_ | 运行托盘 |
+| `--config` | 仅打开设置窗口（无托盘、无监控） |
+| `--list` / `-l` | 打印所有已配对设备后退出 |
+| `--once` | 单次检测后退出（诊断） |
+| `--test-lock-shortcuts` | 仅触发已配置锁屏快捷键后退出，不开设置窗口也不锁屏 |
+| `--version`/`-v` | 打印版本后退出 |
+| `--help` / `-h` | 显示帮助 |
 
-> The exe is built as a Windows-subsystem app, so when running `--list` or
-> `--once` from `cmd`, the prompt returns immediately and the output prints
-> below. For clean capture, redirect: `BluetoothAutoLock.exe --list > out.txt`.
+> exe 为 Windows 子系统程序，`cmd` 中执行 `--list`/`--once` 会立即返回提示符，输出在下方打印。需干净捕获请重定向：`BluetoothAutoLock.exe --list > out.txt`
 
-## Resource footprint
+## 资源占用
 
-- ~90 KB executable.
-- Tray app: 2 threads (UI + monitor); ~25–30 MB working set (WinForms baseline).
-- No network sockets.
-- No third-party DLLs — only Win32 (`Irprops.cpl`, `kernel32.dll`, `user32.dll`)
-  and the .NET Framework BCL (mscorlib, System, System.Drawing, System.Windows.Forms).
+- 可执行文件 ~90 KB
+- 托盘：2 线程（UI + 监控）；工作集 ~25–30 MB（WinForms 基线）
+- 无网络监听
+- 无第三方 DLL — 仅 Win32（`Irprops.cpl`、`kernel32.dll`、`user32.dll`）与 .NET BCL
 
-## Reliability features
+## 可靠性特性
 
-- All exceptions in the polling loop are caught and logged; the loop
-  continues on the next tick. The process never terminates from a transient
-  Bluetooth API hiccup.
-- Crash auto-restart: Task Scheduler retries every 1 minute, up to 999 times.
-- Re-lock suppression: once a Bluetooth-absent idle lock fires, unlocking the
-  Windows session clears suppression but starts a fresh absent+idle window, so
-  it will not immediately relock while you are using the computer.
-- Safety-first lock rule: if the configured Bluetooth key is detected, the app
-  never locks, even when the PC is idle.
-- Active-user guard: if keyboard/mouse input is recent, the app never locks, even
-  when the Bluetooth key is absent.
-- Final presence check: before calling `LockWorkStation`, the app performs last
-  Bluetooth probes; any successful probe cancels the lock.
-- Startup behavior follows the same rule: a missing Bluetooth key can only lock
-  after the PC has also been idle for the configured threshold.
-- Log rotation: single backup at `<log>.1`, no infinite growth.
-- LoL optimizer restores only resources it changed: virtual display state and remote apps that were running before the game and were actually closed. Restored AskLink / ToDesk instances are launched through the app-managed minimized/tray-silent path only; normal user or system startup is not modified. WSL optimization is a one-shot cache reclaim and does not change CPU state.
-- Pause/resume stops and restarts the monitor thread instead of leaving a
-  paused loop half-alive.
-- Settings dialog is single-instance inside the tray app; repeated tray clicks
-  focus the existing settings window instead of opening duplicates.
-- The tray app uses a per-session mutex so manually starting the exe again
-  exits instead of creating a second tray process.
-- Graceful shutdown via tray **Quit**, system shutdown, or service stop.
+- 轮询内所有异常均捕获并记日志，下一个 tick 继续，蓝牙 API 瞬时抖动不会导致进程退出
+- 崩溃自启：任务计划每 1 分钟重试，最多 999 次
+- 重锁抑制：蓝牙离开锁屏触发后，解锁 Windows 会话会清除抑制并开启全新“空闲+离开”窗口，不会立刻重锁
+- 安全优先：只要检测到蓝牙钥匙，就不锁，即使 PC 空闲
+- 活动用户保护：只要近期有键鼠输入，就不锁，即使蓝牙钥匙离开
+- 最终复检：调用 `LockWorkStation` 前做最后蓝牙探测，任一次成功即取消锁屏
+- 日志轮转：单备份 `<log>.1`，不会无限增长
+- LoL 优化仅恢复其改动过的资源：虚拟显示状态与游戏前已运行且被关闭的远程软件；恢复的 AskLink/ToDesk 仅走本程序托管的最小化/托盘静默启动，不影响正常启动
+- 暂停/恢复会停止并重启监控线程
 
-## Troubleshooting
+## 排查
 
-- **`--list` prints nothing.** Your Bluetooth radio is off or there are no
-  paired devices. Pair the phone in Settings → Devices → Bluetooth first.
-- **Lock never fires.** Open Settings via the tray; if the device shows as
-  `[paired]` instead of `[connected]`, the phone hasn't established an active
-  Bluetooth profile yet. Open KDE Connect / your sync app once; that creates
-  a profile binding so `fConnected` flips to true.
-- **Lock fires while I am using the PC.** It should not: keyboard/mouse activity
-  blocks locking. Check the log for `not locking while the computer is in use`.
-- **`csc.exe` not found** during build. You're on a stripped-down Windows
-  install; install .NET Framework 4.x.
+- **`--list` 无输出** 蓝牙未开启或无已配对设备，先在 设置 → 蓝牙 中配对手机
+- **从不锁** 在托盘打开设置，若设备显示 `[已配对]` 而非 `[已连接]`，说明手机未建立活跃蓝牙 Profile，打开一次同步类 App 即可
+- **使用中却锁了** 不应发生，查看日志是否出现 `not locking while the computer is in use`
+- **编译报 `csc.exe` 找不到** 系统为精简版，需安装 .NET Framework 4.x
 
-## Bluetooth backend
+## 蓝牙后端
 
-Uses `Irprops.cpl` (the standard Win32 `BluetoothAPIs`) with
-`BluetoothFindFirstDevice` / `BluetoothFindNextDevice` and reads
-`BLUETOOTH_DEVICE_INFO.fConnected`. This is the same API Windows itself uses;
-available on every Windows 10/11 SKU including LTSC.
+使用 `Irprops.cpl`（标准 Win32 `BluetoothAPIs`）的 `BluetoothFindFirstDevice` / `BluetoothFindNextDevice` 并读取 `BLUETOOTH_DEVICE_INFO.fConnected`，与 Windows 自身一致，支持所有 Windows 10/11 含 LTSC。
