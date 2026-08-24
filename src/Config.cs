@@ -246,7 +246,11 @@ namespace BluetoothAutoLock
                 case "GameProblemMonitorAiEnabled": cfg.GameProblemMonitorAiEnabled = ParseBoolValue(value); break;
                 case "GameProblemMonitorAiEndpoint": cfg.GameProblemMonitorAiEndpoint = value; break;
                 case "GameProblemMonitorAiModel": cfg.GameProblemMonitorAiModel = value; break;
-                case "GameProblemMonitorAiApiKey": cfg.GameProblemMonitorAiApiKey = value; break;
+                case "GameProblemMonitorAiApiKey":
+                    cfg.GameProblemMonitorAiApiKey = value;
+                    if (!string.IsNullOrWhiteSpace(value) && warn != null)
+                        warn("Warn", path + ":" + lineNo + " GameProblemMonitorAiApiKey 明文写在 config.ini 存在泄露风险，建议改用环境变量 " + (string.IsNullOrWhiteSpace(cfg.GameProblemMonitorAiApiKeyEnv) ? "ARK_API_KEY" : cfg.GameProblemMonitorAiApiKeyEnv) + "，并确保不要提交该文件到 Git。");
+                    break;
                 case "GameProblemMonitorAiApiKeyEnv": cfg.GameProblemMonitorAiApiKeyEnv = value; break;
                 case "GameProblemNotifyRepeatMinutes":
                     if (int.TryParse(value, out intVal)) cfg.GameProblemNotifyRepeatMinutes = intVal;
@@ -334,7 +338,7 @@ namespace BluetoothAutoLock
                 { "GameProblemMonitorAiEnabled", cfg.GameProblemMonitorAiEnabled ? "true" : "false" },
                 { "GameProblemMonitorAiEndpoint", cfg.GameProblemMonitorAiEndpoint ?? "" },
                 { "GameProblemMonitorAiModel", cfg.GameProblemMonitorAiModel ?? "" },
-                { "GameProblemMonitorAiApiKey", cfg.GameProblemMonitorAiApiKey ?? "" },
+                { "GameProblemMonitorAiApiKey", "" },
                 { "GameProblemMonitorAiApiKeyEnv", cfg.GameProblemMonitorAiApiKeyEnv ?? "ARK_API_KEY" },
                 { "GameProblemNotifyRepeatMinutes", cfg.GameProblemNotifyRepeatMinutes.ToString(CultureInfo.InvariantCulture) },
                 { "GameProblemRunawayCpuPercent", cfg.GameProblemRunawayCpuPercent.ToString(CultureInfo.InvariantCulture) },
@@ -375,6 +379,7 @@ namespace BluetoothAutoLock
             {
                 output.Add("# BluetoothAutoLock configuration");
                 output.Add("# Format: KEY=VALUE   ('#' or ';' starts a comment)");
+                output.Add("# SECURITY: Do NOT commit real API keys. Use env var ARK_API_KEY instead.");
                 output.Add("");
             }
 

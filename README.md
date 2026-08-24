@@ -1,8 +1,16 @@
 # BluetoothAutoLock
 
+[English](README.md) | [中文](README.zh-CN.md)
+
+![Build](https://github.com/yuloop/BluetoothAutoLock/actions/workflows/build.yml/badge.svg)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
+
 Lightweight Windows tray application that locks the workstation only after the
 configured Bluetooth key is absent and the user has also been idle for the
 configured threshold.
+
+> **Security**: `GameProblemMonitorAiApiKey` is empty by default. **Never commit a real key** — use env var `ARK_API_KEY` instead. `Config.Save()` never persists the plaintext key.
 
 - System-tray app with a configuration dialog — no command line needed for daily use.
 - Targets .NET Framework 4.x — runs out of the box on Windows 10 LTSC 2021.
