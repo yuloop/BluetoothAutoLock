@@ -1,0 +1,259 @@
+using System;
+using System.Runtime.InteropServices;
+
+namespace BluetoothAutoLock
+{
+    internal static class NativeMethods
+    {
+        public const int BLUETOOTH_MAX_NAME_SIZE = 248;
+        public const int ERROR_NO_MORE_ITEMS = 259;
+        public const int CR_SUCCESS = 0;
+        public const uint CM_LOCATE_DEVNODE_NORMAL = 0x00000000;
+        public const uint DN_HAS_PROBLEM = 0x00000400;
+        public const uint CM_PROB_DISABLED = 0x00000016;
+        public const uint INPUT_KEYBOARD = 1;
+        public const uint KEYEVENTF_KEYUP = 0x0002;
+        public const uint KEYEVENTF_SCANCODE = 0x0008;
+        public const uint MAPVK_VK_TO_VSC = 0;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct SYSTEMTIME
+        {
+            public ushort wYear;
+            public ushort wMonth;
+            public ushort wDayOfWeek;
+            public ushort wDay;
+            public ushort wHour;
+            public ushort wMinute;
+            public ushort wSecond;
+            public ushort wMilliseconds;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LASTINPUTINFO
+        {
+            public uint cbSize;
+            public uint dwTime;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct INPUT
+        {
+            public uint type;
+            public INPUTUNION u;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        public struct INPUTUNION
+        {
+            [FieldOffset(0)] public MOUSEINPUT mi;
+            [FieldOffset(0)] public KEYBDINPUT ki;
+            [FieldOffset(0)] public HARDWAREINPUT hi;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MOUSEINPUT
+        {
+            public int dx;
+            public int dy;
+            public uint mouseData;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct KEYBDINPUT
+        {
+            public ushort wVk;
+            public ushort wScan;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct HARDWAREINPUT
+        {
+            public uint uMsg;
+            public ushort wParamL;
+            public ushort wParamH;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct BLUETOOTH_DEVICE_INFO
+        {
+            public uint dwSize;
+            public ulong Address;
+            public uint ulClassofDevice;
+            [MarshalAs(UnmanagedType.Bool)] public bool fConnected;
+            [MarshalAs(UnmanagedType.Bool)] public bool fRemembered;
+            [MarshalAs(UnmanagedType.Bool)] public bool fAuthenticated;
+            public SYSTEMTIME stLastSeen;
+            public SYSTEMTIME stLastUsed;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = BLUETOOTH_MAX_NAME_SIZE)]
+            public string szName;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct BLUETOOTH_DEVICE_SEARCH_PARAMS
+        {
+            public uint dwSize;
+            [MarshalAs(UnmanagedType.Bool)] public bool fReturnAuthenticated;
+            [MarshalAs(UnmanagedType.Bool)] public bool fReturnRemembered;
+            [MarshalAs(UnmanagedType.Bool)] public bool fReturnUnknown;
+            [MarshalAs(UnmanagedType.Bool)] public bool fReturnConnected;
+            [MarshalAs(UnmanagedType.Bool)] public bool fIssueInquiry;
+            public byte cTimeoutMultiplier;
+            public IntPtr hRadio;
+        }
+
+        // Irprops.cpl exports BluetoothFindFirstDevice / BluetoothFindNextDevice / BluetoothFindDeviceClose / BluetoothGetDeviceInfo
+        [DllImport("Irprops.cpl", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr BluetoothFindFirstDevice(
+            ref BLUETOOTH_DEVICE_SEARCH_PARAMS pbtsp,
+            ref BLUETOOTH_DEVICE_INFO pbtdi);
+
+        [DllImport("Irprops.cpl", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool BluetoothFindNextDevice(
+            IntPtr hFind,
+            ref BLUETOOTH_DEVICE_INFO pbtdi);
+
+        [DllImport("Irprops.cpl", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool BluetoothFindDeviceClose(IntPtr hFind);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool LockWorkStation();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+        [DllImport("user32.dll")]
+        public static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        public const int SW_HIDE = 0;
+        public const int SW_SHOWMINNOACTIVE = 7;
+        public const int SW_RESTORE = 9;
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("CfgMgr32.dll", CharSet = CharSet.Unicode, EntryPoint = "CM_Locate_DevNodeW")]
+        public static extern int CM_Locate_DevNode(out uint pdnDevInst, string pDeviceID, uint ulFlags);
+
+        [DllImport("CfgMgr32.dll")]
+        public static extern int CM_Get_DevNode_Status(out uint pulStatus, out uint pulProblemNumber, uint dnDevInst, uint ulFlags);
+
+        [DllImport("CfgMgr32.dll")]
+        public static extern int CM_Disable_DevNode(uint dnDevInst, uint ulFlags);
+
+        [DllImport("CfgMgr32.dll")]
+        public static extern int CM_Enable_DevNode(uint dnDevInst, uint ulFlags);
+
+        [DllImport("kernel32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetConsoleCtrlHandler(ConsoleCtrlDelegate handler, [MarshalAs(UnmanagedType.Bool)] bool add);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool AttachConsole(int processId);
+
+        public const int ATTACH_PARENT_PROCESS = -1;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool FreeConsole();
+
+        [DllImport("kernel32.dll")]
+        public static extern IntPtr GetCurrentProcess();
+
+        [DllImport("kernel32.dll")]
+        public static extern uint GetTickCount();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetProcessWorkingSetSize(IntPtr handle, IntPtr minWorkingSet, IntPtr maxWorkingSet);
+
+        public static void TrimWorkingSet()
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            try { SetProcessWorkingSetSize(GetCurrentProcess(), new IntPtr(-1), new IntPtr(-1)); } catch { }
+        }
+
+        public static int GetIdleSeconds()
+        {
+            try
+            {
+                var info = new LASTINPUTINFO();
+                info.cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO));
+                if (!GetLastInputInfo(ref info)) return int.MaxValue;
+
+                uint idleMs = unchecked(GetTickCount() - info.dwTime);
+                return (int)Math.Min(int.MaxValue, idleMs / 1000U);
+            }
+            catch
+            {
+                return int.MaxValue;
+            }
+        }
+
+        public static INPUT CreateKeyboardInput(ushort virtualKey, bool keyUp)
+        {
+            var input = new INPUT();
+            input.type = INPUT_KEYBOARD;
+            uint scanCode = MapVirtualKey(virtualKey, MAPVK_VK_TO_VSC);
+            input.u.ki.wVk = scanCode == 0 ? virtualKey : (ushort)0;
+            input.u.ki.wScan = (ushort)scanCode;
+            input.u.ki.dwFlags = (scanCode == 0 ? 0 : KEYEVENTF_SCANCODE) | (keyUp ? KEYEVENTF_KEYUP : 0);
+            input.u.ki.time = 0;
+            input.u.ki.dwExtraInfo = IntPtr.Zero;
+            return input;
+        }
+
+        public delegate bool ConsoleCtrlDelegate(int ctrlType);
+
+        public static string FormatBluetoothAddress(ulong address)
+        {
+            byte[] b = BitConverter.GetBytes(address);
+            return string.Format("{0:X2}:{1:X2}:{2:X2}:{3:X2}:{4:X2}:{5:X2}",
+                b[5], b[4], b[3], b[2], b[1], b[0]);
+        }
+
+        public static bool TryParseBluetoothAddress(string text, out ulong address)
+        {
+            address = 0;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            string clean = text.Replace(":", "").Replace("-", "").Replace(" ", "").Trim();
+            if (clean.Length != 12) return false;
+            return ulong.TryParse(clean, System.Globalization.NumberStyles.HexNumber,
+                System.Globalization.CultureInfo.InvariantCulture, out address);
+        }
+    }
+}

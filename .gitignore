@@ -1,0 +1,40 @@
+# Build output
+build/
+bin/
+obj/
+*.exe
+*.pdb
+*.log
+*.log.1
+
+# Local config with real device MAC - don't commit personal device address
+# Keep config/config.ini as template (empty DeviceAddress), ignore local built config
+# build/config.ini is auto-copied at build time
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# Internal working notes & agent memory - never publish
+.omx/
+.omc/
+.claude/
+.opencode/
+*.tmp
+*.temp
+
+# Logs
+logs/
+*.log
+
+# Test artifacts
+tests/bin/
+TestResults/
