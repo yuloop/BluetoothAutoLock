@@ -92,6 +92,7 @@ namespace BluetoothAutoLock
         private bool _wasConnected;
         private DateTime? _missingSince;
         private int _missingProbeCount;
+        private DateTime _appLockFinishedUtc = DateTime.MinValue;
         private readonly LockLifecycleState _lockLifecycle = new LockLifecycleState();
         private readonly object _statusGate = new object();
         private long _statusSequence;
@@ -261,7 +262,8 @@ namespace BluetoothAutoLock
                 " | IdleBeforeBluetoothCheck=" + IdleSecondsBeforeBluetoothCheck + "s" +
                 " | BluetoothAbsenceBeforeLock=" + _cfg.DisconnectDelaySeconds + "s" +
                 " | FinalRecheckAttempts=" + FinalRecheckAttempts() +
-                " | Polling=random " + pollMinSeconds + "-" + pollMaxSeconds + "s");
+                " | Polling=random " + pollMinSeconds + "-" + pollMaxSeconds + "s" +
+                " | LeaveActions: lockScreen=" + _cfg.LockScreenEnabled + ", lockWeChatQQ=" + LockAppsEnabled());
 
             while (!_shouldStop())
             {
@@ -298,8 +300,25 @@ namespace BluetoothAutoLock
                 SetStatus("已解锁 — 重新计时", "重新开始：键鼠空闲30秒后检查蓝牙，蓝牙缺失满阈值才会再次锁屏");
             }
 
+            if (UserReturnPolicy.InputOccurredAfter(_appLockFinishedUtc, DateTime.UtcNow, NativeMethods.GetIdleSeconds()) &&
+                _lockLifecycle.RearmAfterUserReturn())
+            {
+                ResetMissingState();
+                _wasConnected = false;
+                _log.Info("Keyboard/mouse input after locking WeChat/QQ; monitor re-armed with a fresh idle-then-Bluetooth-absence window.");
+                SetStatus("你回来了 — 重新计时", "键鼠空闲30秒后检查蓝牙，蓝牙缺失满阈值才会再次锁定");
+            }
+
             if (_lockLifecycle.IsLockedUntilSessionUnlock)
             {
+                return;
+            }
+
+            if (!_cfg.LockScreenEnabled && !LockAppsEnabled())
+            {
+                ResetMissingState();
+                _log.Debug("Lock screen and WeChat/QQ lock are both disabled; skipping Bluetooth probes.");
+                SetStatus("离开后动作都已关闭", "在设置里勾选“锁定 Windows 屏幕”或“锁定微信/QQ”后才会检查蓝牙");
                 return;
             }
 
@@ -458,9 +477,22 @@ namespace BluetoothAutoLock
                 return;
             }
 
+            bool lockScreen = _cfg.LockScreenEnabled;
+            bool lockApps = LockAppsEnabled();
             _log.Info("Target absent for at least " + absenceRequiredSeconds +
-                "s after keyboard/mouse idle threshold and no input occurred; triggering configured shortcuts and locking workstation.");
-            TriggerLockShortcutsBeforeLock();
+                "s after keyboard/mouse idle threshold and no input occurred; running leave actions (lockScreen=" +
+                lockScreen + ", lockWeChatQQ=" + lockApps + ").");
+            int appLocks = lockApps ? TriggerLockShortcuts(lockScreen) : 0;
+            if (!lockScreen)
+            {
+                _appLockFinishedUtc = DateTime.UtcNow;
+                _lockLifecycle.MarkAppLockSucceeded();
+                _log.Info("WeChat/QQ lock finished without locking the workstation (" + appLocks +
+                    " shortcut(s) sent); waiting for keyboard/mouse input before re-arming.");
+                SetStatus("已锁定微信/QQ（等你回来）", "你回来碰键盘鼠标后重新计时；这期间不会重复锁定");
+                return;
+            }
+
             bool ok = false;
             try { ok = NativeMethods.LockWorkStation(); }
             catch (Exception ex) { _log.Error("LockWorkStation threw: " + ex.Message); }
@@ -477,16 +509,20 @@ namespace BluetoothAutoLock
             }
         }
 
-        private void TriggerLockShortcutsBeforeLock()
+        private bool LockAppsEnabled()
         {
-            if (_cfg.LockShortcutMappings == null || _cfg.LockShortcutMappings.Count == 0) return;
+            return _cfg.LockShortcutsEnabled && _cfg.LockShortcutMappings != null && _cfg.LockShortcutMappings.Count > 0;
+        }
 
-            SetStatus("触发锁屏快捷键", "正在执行 " + _cfg.LockShortcutMappings.Count + " 个快捷键，然后锁屏");
+        private int TriggerLockShortcuts(bool screenLockFollows)
+        {
+            SetStatus("锁定微信/QQ", "正在执行 " + _cfg.LockShortcutMappings.Count + " 个锁屏快捷键" + (screenLockFollows ? "，然后锁屏" : ""));
             int sent = LockShortcutRunner.TriggerAll(
                 _cfg.LockShortcutMappings,
+                _cfg.WeChatShowWindowShortcut,
                 msg => _log.Info(msg),
                 msg => _log.Warn(msg));
-            if (sent > 0)
+            if (sent > 0 && screenLockFollows)
             {
                 int settleMs = Math.Max(0, Math.Min(10000, _cfg.LockShortcutSettleMilliseconds));
                 if (settleMs > 0)
@@ -496,6 +532,7 @@ namespace BluetoothAutoLock
                     Thread.Sleep(settleMs);
                 }
             }
+            return sent;
         }
 
         private void ResetMissingState()

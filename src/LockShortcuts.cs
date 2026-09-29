@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -247,7 +248,7 @@ namespace BluetoothAutoLock
 
     internal static class LockShortcutRunner
     {
-        public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, Action<string> info, Action<string> warn)
+        public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, string weChatShowWindowShortcut, Action<string> info, Action<string> warn)
         {
             if (mappings == null) return 0;
 
@@ -256,32 +257,38 @@ namespace BluetoothAutoLock
             {
                 if (mapping == null || string.IsNullOrWhiteSpace(mapping.Shortcut)) continue;
 
+                string note = string.IsNullOrWhiteSpace(mapping.Note) ? "" : (" | 备注：" + mapping.Note);
                 try
                 {
-                    ShortcutTargetActivation activation = LockShortcutTargetActivator.TryActivate(mapping);
+                    ShortcutTargetActivation activation = LockShortcutTargetActivator.TryActivate(mapping, weChatShowWindowShortcut);
+                    if (!activation.ReadyToSend)
+                    {
+                        if (warn != null) warn("Lock shortcut skipped: " + mapping.Shortcut + note + activation.ToLogSuffix());
+                        continue;
+                    }
+
                     ShortcutSendResult result = SendShortcut(mapping.Shortcut);
                     sent++;
                     if (info != null)
                     {
-                        string note = string.IsNullOrWhiteSpace(mapping.Note) ? "" : (" | 备注：" + mapping.Note);
                         info("Lock shortcut triggered: " + mapping.Shortcut + note +
                             activation.ToLogSuffix() +
                             " | method=" + result.Method +
                             " | InputEvents=" + result.SentInputs + "/" + result.RequestedInputs +
                             " | lastError=" + result.LastWin32Error);
                     }
-                    Thread.Sleep(120);
+                    Thread.Sleep(300);
                 }
                 catch (Exception ex)
                 {
-                    if (warn != null) warn("Lock shortcut failed: " + mapping.Shortcut + " | " + ex.Message);
+                    if (warn != null) warn("Lock shortcut failed: " + mapping.Shortcut + note + " | " + ex.Message);
                 }
             }
 
             return sent;
         }
 
-        private static ShortcutSendResult SendShortcut(string shortcut)
+        internal static ShortcutSendResult SendShortcut(string shortcut)
         {
             bool ctrl;
             bool alt;
@@ -313,7 +320,13 @@ namespace BluetoothAutoLock
             return new ShortcutSendResult(arr.Length, written, lastError, "SendInputScanCode");
         }
 
-        private sealed class ShortcutSendResult
+        internal static void SendKey(ushort virtualKey, bool keyUp)
+        {
+            NativeMethods.INPUT[] arr = { NativeMethods.CreateKeyboardInput(virtualKey, keyUp) };
+            NativeMethods.SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(NativeMethods.INPUT)));
+        }
+
+        internal sealed class ShortcutSendResult
         {
             public readonly int RequestedInputs;
             public readonly uint SentInputs;
@@ -355,6 +368,11 @@ namespace BluetoothAutoLock
             return false;
         }
 
+        internal static bool IsWeChatTarget(string[] processNames)
+        {
+            return processNames != null && Array.IndexOf(processNames, "Weixin") >= 0;
+        }
+
         private static bool Contains(string value, string token)
         {
             return value != null && value.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0;
@@ -363,90 +381,193 @@ namespace BluetoothAutoLock
 
     internal static class LockShortcutTargetActivator
     {
-        public static ShortcutTargetActivation TryActivate(LockShortcutMapping mapping)
+        private const int ShowWaitMilliseconds = 2500;
+
+        public static ShortcutTargetActivation TryActivate(LockShortcutMapping mapping, string weChatShowWindowShortcut)
         {
             string[] processNames;
             if (!LockShortcutTargetResolver.TryGetTargetProcessNames(mapping, out processNames))
                 return ShortcutTargetActivation.NotNeeded();
 
-            IntPtr hwnd;
-            string processName;
-            if (!TryFindWindow(processNames, out hwnd, out processName))
-                return ShortcutTargetActivation.Failed(string.Join(",", processNames), "未找到可见主窗口");
+            string target = string.Join(",", processNames);
+            HashSet<uint> pids = FindProcessIds(processNames);
+            if (pids.Count == 0)
+                return ShortcutTargetActivation.Failed(target, "未运行");
 
-            try
+            TargetWindowCandidate window = FindMainWindow(pids);
+            if (window == null)
+                return ShortcutTargetActivation.Failed(target, "未找到主窗口");
+
+            string shown = "visible";
+            if (!window.Visible)
             {
-                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
-                Thread.Sleep(150);
-                bool foreground = NativeMethods.SetForegroundWindow(hwnd);
-                Thread.Sleep(600);
-                return ShortcutTargetActivation.Activated(processName, hwnd, foreground);
+                string showShortcut = LockShortcutTargetResolver.IsWeChatTarget(processNames)
+                    ? (weChatShowWindowShortcut ?? "").Trim()
+                    : "";
+                window = ShowHiddenWindow(window, pids, showShortcut, out shown);
+                if (window == null)
+                    return ShortcutTargetActivation.Failed(target, "托盘里的窗口没能叫出来(" + shown + ")");
             }
-            catch (Exception ex)
+            else if (window.Iconic)
             {
-                return ShortcutTargetActivation.Failed(processName, ex.Message);
+                NativeMethods.ShowWindow(window.Handle, NativeMethods.SW_RESTORE);
+                shown = "restored";
+                Thread.Sleep(300);
             }
+
+            string foregroundMethod;
+            if (!ForceForeground(window.Handle, pids, out foregroundMethod))
+                return ShortcutTargetActivation.Failed(target, "没能切到最前面(show=" + shown + ", " + foregroundMethod + ")");
+
+            Thread.Sleep(300);
+            return ShortcutTargetActivation.Activated(target, window, shown, foregroundMethod);
         }
 
-        private static bool TryFindWindow(string[] processNames, out IntPtr hwnd, out string processName)
+        private static TargetWindowCandidate ShowHiddenWindow(TargetWindowCandidate hidden, HashSet<uint> pids, string showShortcut, out string shown)
         {
-            hwnd = IntPtr.Zero;
-            processName = "";
-            if (processNames == null) return false;
-
-            for (int i = 0; i < processNames.Length; i++)
+            TargetWindowCandidate window;
+            if (!string.IsNullOrEmpty(showShortcut))
             {
-                string name = processNames[i];
-                if (string.IsNullOrWhiteSpace(name)) continue;
+                LockShortcutRunner.SendShortcut(showShortcut);
+                shown = "hotkey " + showShortcut;
+                window = WaitForVisibleMainWindow(pids, ShowWaitMilliseconds);
+                if (window != null)
+                {
+                    Thread.Sleep(500);
+                    return window;
+                }
+            }
 
+            NativeMethods.ShowWindow(hidden.Handle, NativeMethods.SW_SHOW);
+            shown = string.IsNullOrEmpty(showShortcut) ? "ShowWindow" : ("hotkey " + showShortcut + " -> ShowWindow");
+            window = WaitForVisibleMainWindow(pids, ShowWaitMilliseconds);
+            if (window != null) Thread.Sleep(500);
+            return window;
+        }
+
+        private static bool ForceForeground(IntPtr hwnd, HashSet<uint> pids, out string method)
+        {
+            method = "already";
+            if (IsForegroundTarget(pids)) return true;
+
+            method = "direct";
+            NativeMethods.SetForegroundWindow(hwnd);
+            if (WaitForForeground(pids, 300)) return true;
+
+            method = "attach";
+            NativeMethods.MSG ignoredMessage;
+            NativeMethods.PeekMessage(out ignoredMessage, IntPtr.Zero, 0, 0, NativeMethods.PM_NOREMOVE);
+            IntPtr foreground = NativeMethods.GetForegroundWindow();
+            uint ignoredPid;
+            uint foregroundThread = foreground == IntPtr.Zero ? 0 : NativeMethods.GetWindowThreadProcessId(foreground, out ignoredPid);
+            uint currentThread = NativeMethods.GetCurrentThreadId();
+            bool attached = foregroundThread != 0 && foregroundThread != currentThread &&
+                NativeMethods.AttachThreadInput(currentThread, foregroundThread, true);
+            try
+            {
+                NativeMethods.BringWindowToTop(hwnd);
+                NativeMethods.SetForegroundWindow(hwnd);
+            }
+            finally
+            {
+                if (attached) NativeMethods.AttachThreadInput(currentThread, foregroundThread, false);
+            }
+            if (WaitForForeground(pids, 300)) return true;
+
+            method = "alt";
+            LockShortcutRunner.SendKey(NativeMethods.VK_MENU, false);
+            NativeMethods.SetForegroundWindow(hwnd);
+            LockShortcutRunner.SendKey(NativeMethods.VK_MENU, true);
+            return WaitForForeground(pids, 500);
+        }
+
+        private static bool WaitForForeground(HashSet<uint> pids, int timeoutMs)
+        {
+            Stopwatch watch = Stopwatch.StartNew();
+            do
+            {
+                if (IsForegroundTarget(pids)) return true;
+                Thread.Sleep(50);
+            }
+            while (watch.ElapsedMilliseconds < timeoutMs);
+            return false;
+        }
+
+        private static bool IsForegroundTarget(HashSet<uint> pids)
+        {
+            IntPtr foreground = NativeMethods.GetForegroundWindow();
+            if (foreground == IntPtr.Zero) return false;
+            uint pid;
+            NativeMethods.GetWindowThreadProcessId(foreground, out pid);
+            return pids.Contains(pid);
+        }
+
+        private static TargetWindowCandidate WaitForVisibleMainWindow(HashSet<uint> pids, int timeoutMs)
+        {
+            Stopwatch watch = Stopwatch.StartNew();
+            do
+            {
+                TargetWindowCandidate window = FindMainWindow(pids);
+                if (window != null && window.Visible) return window;
+                Thread.Sleep(100);
+            }
+            while (watch.ElapsedMilliseconds < timeoutMs);
+            return null;
+        }
+
+        private static HashSet<uint> FindProcessIds(string[] processNames)
+        {
+            var pids = new HashSet<uint>();
+            foreach (string name in processNames)
+            {
+                if (string.IsNullOrWhiteSpace(name)) continue;
                 foreach (Process process in Process.GetProcessesByName(name))
                 {
                     using (process)
-                    {
-                        IntPtr handle = process.MainWindowHandle;
-                        if (handle == IntPtr.Zero) continue;
-                        if (!NativeMethods.IsWindowVisible(handle)) continue;
-                        hwnd = handle;
-                        processName = process.ProcessName;
-                        return true;
-                    }
+                        pids.Add((uint)process.Id);
                 }
             }
+            return pids;
+        }
 
-            IntPtr found = IntPtr.Zero;
-            string foundProcess = "";
+        private static TargetWindowCandidate FindMainWindow(HashSet<uint> pids)
+        {
+            var candidates = new List<TargetWindowCandidate>();
             NativeMethods.EnumWindows(delegate (IntPtr window, IntPtr lParam)
             {
-                if (!NativeMethods.IsWindowVisible(window)) return true;
-
                 uint pid;
                 NativeMethods.GetWindowThreadProcessId(window, out pid);
-                if (pid == 0) return true;
-
-                Process process = null;
-                try { process = Process.GetProcessById((int)pid); }
-                catch { return true; }
-
-                using (process)
-                {
-                    for (int i = 0; i < processNames.Length; i++)
-                    {
-                        if (string.Equals(process.ProcessName, processNames[i], StringComparison.OrdinalIgnoreCase))
-                        {
-                            found = window;
-                            foundProcess = process.ProcessName;
-                            return false;
-                        }
-                    }
-                }
-
+                if (pid != 0 && pids.Contains(pid)) candidates.Add(DescribeWindow(window));
                 return true;
             }, IntPtr.Zero);
 
-            if (found == IntPtr.Zero) return false;
-            hwnd = found;
-            processName = foundProcess;
-            return true;
+            return TargetWindowPolicy.ChooseMainWindow(candidates);
+        }
+
+        private static TargetWindowCandidate DescribeWindow(IntPtr window)
+        {
+            var title = new StringBuilder(256);
+            var className = new StringBuilder(256);
+            NativeMethods.GetWindowText(window, title, title.Capacity);
+            NativeMethods.GetClassName(window, className, className.Capacity);
+            NativeMethods.RECT rect;
+            bool hasRect = NativeMethods.GetWindowRect(window, out rect);
+            int style = NativeMethods.GetWindowLong(window, NativeMethods.GWL_STYLE);
+            int exStyle = NativeMethods.GetWindowLong(window, NativeMethods.GWL_EXSTYLE);
+
+            return new TargetWindowCandidate
+            {
+                Handle = window,
+                Visible = NativeMethods.IsWindowVisible(window),
+                Iconic = NativeMethods.IsIconic(window),
+                HasOwner = NativeMethods.GetWindow(window, NativeMethods.GW_OWNER) != IntPtr.Zero,
+                ToolWindow = (exStyle & NativeMethods.WS_EX_TOOLWINDOW) != 0,
+                Minimizable = (style & NativeMethods.WS_MINIMIZEBOX) != 0,
+                Title = title.ToString(),
+                ClassName = className.ToString(),
+                Width = hasRect ? rect.Right - rect.Left : 0,
+                Height = hasRect ? rect.Bottom - rect.Top : 0
+            };
         }
     }
 
@@ -455,40 +576,51 @@ namespace BluetoothAutoLock
         private readonly bool _attempted;
         private readonly bool _activated;
         private readonly string _target;
-        private readonly IntPtr _hwnd;
-        private readonly bool _foregroundResult;
+        private readonly TargetWindowCandidate _window;
+        private readonly string _shown;
+        private readonly string _foregroundMethod;
         private readonly string _reason;
 
-        private ShortcutTargetActivation(bool attempted, bool activated, string target, IntPtr hwnd, bool foregroundResult, string reason)
+        private ShortcutTargetActivation(bool attempted, bool activated, string target, TargetWindowCandidate window, string shown, string foregroundMethod, string reason)
         {
             _attempted = attempted;
             _activated = activated;
             _target = target ?? "";
-            _hwnd = hwnd;
-            _foregroundResult = foregroundResult;
+            _window = window;
+            _shown = shown ?? "";
+            _foregroundMethod = foregroundMethod ?? "";
             _reason = reason ?? "";
+        }
+
+        public bool ReadyToSend
+        {
+            get { return !_attempted || _activated; }
         }
 
         public static ShortcutTargetActivation NotNeeded()
         {
-            return new ShortcutTargetActivation(false, false, "", IntPtr.Zero, false, "");
+            return new ShortcutTargetActivation(false, false, "", null, "", "", "");
         }
 
-        public static ShortcutTargetActivation Activated(string target, IntPtr hwnd, bool foregroundResult)
+        public static ShortcutTargetActivation Activated(string target, TargetWindowCandidate window, string shown, string foregroundMethod)
         {
-            return new ShortcutTargetActivation(true, true, target, hwnd, foregroundResult, "");
+            return new ShortcutTargetActivation(true, true, target, window, shown, foregroundMethod, "");
         }
 
         public static ShortcutTargetActivation Failed(string target, string reason)
         {
-            return new ShortcutTargetActivation(true, false, target, IntPtr.Zero, false, reason);
+            return new ShortcutTargetActivation(true, false, target, null, "", "", reason);
         }
 
         public string ToLogSuffix()
         {
             if (!_attempted) return "";
-            if (_activated)
-                return " | target=" + _target + " | targetHwnd=0x" + _hwnd.ToInt64().ToString("X") + " | foreground=" + _foregroundResult;
+            if (_activated && _window != null)
+                return " | target=" + _target +
+                    " | targetHwnd=0x" + _window.Handle.ToInt64().ToString("X") +
+                    " | window='" + _window.Title + "'/" + _window.ClassName +
+                    " | show=" + _shown +
+                    " | foreground=true(" + _foregroundMethod + ")";
             return " | target=" + _target + " | foreground=false | targetReason=" + _reason;
         }
     }

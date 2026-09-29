@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace BluetoothAutoLock.Tests
@@ -21,6 +22,11 @@ namespace BluetoothAutoLock.Tests
                 MonitorUsesLifecycleGuardBeforeProbing();
                 SessionHandlerRequiresActualUnlock();
                 SdpPresenceRequiresServiceRecords();
+                AppLockWaitsForUserReturn();
+                UserReturnIgnoresInjectedInput();
+                ChoosesMainWindowFromRealWeChatAndQqLayout();
+                LeaveActionsRespectToggles();
+                ShortcutRunnerSkipsWhenTargetNotForeground();
                 Console.WriteLine("通过：" + _passed + " 项");
                 return 0;
             }
@@ -145,6 +151,109 @@ namespace BluetoothAutoLock.Tests
             Assert(!evidence.Contains("evidence.SdpProbe.Value && target.Connected"),
                 "已配对手机在旁边时 fConnected 通常为 false，SDP 有服务记录即应视为在场，不得再要求 fConnected");
             Pass();
+        }
+
+        private static void AppLockWaitsForUserReturn()
+        {
+            var state = new LockLifecycleState();
+            state.MarkAppLockSucceeded();
+            Assert(state.IsLockedUntilSessionUnlock, "只锁微信/QQ 后也必须暂停监控，避免反复锁定");
+            Assert(!state.RequestRearmAfterSessionUnlock(), "只锁微信/QQ 时，Windows 解锁事件不能重新开始监控");
+            Assert(!state.ConsumeRearmRequest(), "只锁微信/QQ 时不存在待消费的解锁请求");
+            Assert(state.RearmAfterUserReturn(), "用户回来操作键鼠后应重新开始监控");
+            Assert(!state.IsLockedUntilSessionUnlock, "重新开始监控后应解除暂停");
+            Assert(!state.RearmAfterUserReturn(), "没有锁定时不能重复重新开始");
+
+            state.MarkLockSucceeded();
+            Assert(!state.RearmAfterUserReturn(), "锁屏后只能由 Windows 解锁事件重新开始，键鼠输入不算");
+            Pass();
+        }
+
+        private static void UserReturnIgnoresInjectedInput()
+        {
+            DateTime finished = new DateTime(2026, 9, 29, 12, 0, 0, DateTimeKind.Utc);
+            DateTime now = finished.AddSeconds(20);
+            Assert(!UserReturnPolicy.InputOccurredAfter(finished, now, 21), "锁定前的键鼠输入不算用户回来");
+            Assert(!UserReturnPolicy.InputOccurredAfter(finished, now, 19), "程序自己按下的锁定键不能算用户回来");
+            Assert(UserReturnPolicy.InputOccurredAfter(finished, now, 5), "锁定完成后出现的键鼠输入应算用户回来");
+            Assert(!UserReturnPolicy.InputOccurredAfter(finished, now, int.MaxValue), "读不到空闲时间时不能算用户回来");
+            Assert(!UserReturnPolicy.InputOccurredAfter(finished, now, -1), "非法空闲时间不能算用户回来");
+            Pass();
+        }
+
+        private static void ChoosesMainWindowFromRealWeChatAndQqLayout()
+        {
+            var weChat = new List<TargetWindowCandidate>
+            {
+                Window(0x5A1BFE, false, false, false, 0x06000000, 0x000800A8, "Weixin", "Qt51514QWindowToolSaveBits", 246, 70),
+                Window(0x90940, false, false, false, unchecked((int)0x86C70000), 0x00000100, "微信", "Qt51514QWindowIcon", 1135, 974),
+                Window(0x851384, false, false, false, unchecked((int)0x86CF0000), 0x00000100, "Weixin", "Qt51514QWindowIcon", 176, 199),
+                Window(0x509C4, false, false, false, 0x04C00000, 0x00000100, "WxTrayIconMessageWindow", "Qt51514WxTrayIconMessageWindowClass", 1920, 1023),
+                Window(0x5017B6, false, false, true, unchecked((int)0x8C000000), 0, "Default IME", "IME", 0, 0)
+            };
+            TargetWindowCandidate weChatMain = TargetWindowPolicy.ChooseMainWindow(weChat);
+            Assert(weChatMain != null && weChatMain.Handle == new IntPtr(0x90940), "微信缩在托盘时应选中隐藏的“微信”主窗口，而不是托盘消息窗口或小弹窗");
+
+            var qq = new List<TargetWindowCandidate>
+            {
+                Window(0x30198, true, false, false, 0x14C70000, 0x00200100, "QQ", "Chrome_WidgetWin_1", 1264, 996),
+                Window(0x1961B6A, false, false, false, 0x04C70000, 0x00200100, "QQ", "Chrome_WidgetWin_1", 800, 600),
+                Window(0x11C1916, false, false, false, 0x04020000, 0x00200000, "QQ", "Chrome_WidgetWin_1", 32, 39),
+                Window(0x81CE2, false, false, false, 0x04020000, 0x00200000, "QQ", "Chrome_WidgetWin_1", 350, 510),
+                Window(0x511DD8, false, false, false, unchecked((int)0x84000000), 0, "GDI+ Window (QQ.exe)", "GDI+ Hook Window Class", 1, 1)
+            };
+            TargetWindowCandidate qqMain = TargetWindowPolicy.ChooseMainWindow(qq);
+            Assert(qqMain != null && qqMain.Handle == new IntPtr(0x30198), "QQ 主窗口开着时应优先选中可见的主窗口");
+
+            qq[0] = Window(0x30198, false, false, false, 0x04C70000, 0x00200100, "QQ", "Chrome_WidgetWin_1", 1264, 996);
+            qqMain = TargetWindowPolicy.ChooseMainWindow(qq);
+            Assert(qqMain != null && qqMain.Handle == new IntPtr(0x30198), "QQ 缩到托盘时应选中最大的隐藏主窗口");
+
+            qq[0] = Window(0x30198, true, true, false, 0x34C70000, 0x00200100, "QQ", "Chrome_WidgetWin_1", 160, 28);
+            qqMain = TargetWindowPolicy.ChooseMainWindow(qq);
+            Assert(qqMain != null && qqMain.Handle == new IntPtr(0x30198), "QQ 最小化时应选中最小化的主窗口并还原");
+            Pass();
+        }
+
+        private static void LeaveActionsRespectToggles()
+        {
+            string source = ReadSource("BluetoothMonitor.cs");
+            string tick = ExtractMethodBody(source, "private void Tick(DateTime nowUtc)");
+            int rearm = tick.IndexOf("_lockLifecycle.RearmAfterUserReturn()", StringComparison.Ordinal);
+            int guard = tick.IndexOf("_lockLifecycle.IsLockedUntilSessionUnlock", StringComparison.Ordinal);
+            Assert(rearm >= 0 && guard >= 0 && rearm < guard, "用户回来后的重新开始必须在锁定暂停检查之前");
+            Assert(tick.Contains("!_cfg.LockScreenEnabled && !LockAppsEnabled()"), "两个离开动作都关闭时不应探测蓝牙");
+            int appLock = tick.IndexOf("_lockLifecycle.MarkAppLockSucceeded()", StringComparison.Ordinal);
+            int lockWorkstation = tick.IndexOf("NativeMethods.LockWorkStation()", StringComparison.Ordinal);
+            Assert(appLock >= 0 && lockWorkstation >= 0 && appLock < lockWorkstation, "关闭锁屏时只锁微信/QQ，必须在调用锁屏之前返回");
+            Pass();
+        }
+
+        private static void ShortcutRunnerSkipsWhenTargetNotForeground()
+        {
+            string source = ReadSource("LockShortcuts.cs");
+            string body = ExtractMethodBody(source, "public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, string weChatShowWindowShortcut, Action<string> info, Action<string> warn)");
+            int ready = body.IndexOf("activation.ReadyToSend", StringComparison.Ordinal);
+            int send = body.IndexOf("SendShortcut(mapping.Shortcut)", StringComparison.Ordinal);
+            Assert(ready >= 0 && send >= 0 && ready < send, "微信/QQ 没切到最前面时不能盲按锁定键");
+            Pass();
+        }
+
+        private static TargetWindowCandidate Window(long handle, bool visible, bool iconic, bool hasOwner, int style, int exStyle, string title, string className, int width, int height)
+        {
+            return new TargetWindowCandidate
+            {
+                Handle = new IntPtr(handle),
+                Visible = visible,
+                Iconic = iconic,
+                HasOwner = hasOwner,
+                ToolWindow = (exStyle & 0x00000080) != 0,
+                Minimizable = (style & 0x00020000) != 0,
+                Title = title,
+                ClassName = className,
+                Width = width,
+                Height = height
+            };
         }
 
         private static string ReadSource(string fileName)

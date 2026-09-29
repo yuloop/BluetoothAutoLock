@@ -511,7 +511,7 @@ namespace BluetoothAutoLock
                 return;
             }
 
-            using (var form = new SettingsForm(_cfg, GetMonitorStatusSnapshot))
+            using (var form = new SettingsForm(_cfg, GetMonitorStatusSnapshot, _log))
             {
                 _settingsForm = form;
                 try

@@ -160,6 +160,7 @@ namespace BluetoothAutoLock.Tests
                     foregroundBeforeSend = GetForegroundWindow() == form.Handle;
                     sent = LockShortcutRunner.TriggerAll(
                         new[] { new LockShortcutMapping("Ctrl+Alt+Shift+O", "多组合测试") },
+                        "",
                         null,
                         message => { warning = message; });
                 };
@@ -223,6 +224,7 @@ namespace BluetoothAutoLock.Tests
                     sendTimer.Stop();
                     sent = LockShortcutRunner.TriggerAll(
                         new[] { new LockShortcutMapping("Ctrl+Alt+Shift+O", "全局热键测试") },
+                        "",
                         message => { info = message; },
                         message => { warning = message; });
                 };
