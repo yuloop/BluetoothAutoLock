@@ -88,6 +88,13 @@ namespace BluetoothAutoLock
             double sinceAction = (nowUtc - actionFinishedUtc).TotalSeconds;
             return (double)idleSeconds + InjectedInputGraceSeconds < sinceAction;
         }
+
+        internal const int InjectionToleranceMilliseconds = 250;
+
+        internal static bool IsInputAfterInjection(uint lastInputTick, uint lastInjectedTick)
+        {
+            return unchecked((int)(lastInputTick - lastInjectedTick)) > InjectionToleranceMilliseconds;
+        }
     }
 
     internal sealed class TargetWindowCandidate

@@ -483,10 +483,11 @@ namespace BluetoothAutoLock
                 "s after keyboard/mouse idle threshold and no input occurred; running leave actions (lockScreen=" +
                 lockScreen + ", lockWeChatQQ=" + lockApps + ").");
             int appLocks = 0;
+            bool userInputDuringShortcuts = false;
             DateTime shortcutsFinishedUtc = DateTime.UtcNow;
             if (lockApps)
             {
-                appLocks = TriggerLockShortcuts(lockScreen);
+                appLocks = TriggerLockShortcuts(lockScreen, out userInputDuringShortcuts);
                 shortcutsFinishedUtc = DateTime.UtcNow;
             }
             if (!lockScreen)
@@ -506,10 +507,11 @@ namespace BluetoothAutoLock
                 return;
             }
 
-            if (appLocks > 0) WaitBeforeWorkstationLock(appLocks);
-            if (UserReturnPolicy.InputOccurredAfter(shortcutsFinishedUtc, DateTime.UtcNow, NativeMethods.GetIdleSeconds()))
+            if (appLocks > 0 && !userInputDuringShortcuts) WaitBeforeWorkstationLock(appLocks);
+            if (userInputDuringShortcuts ||
+                UserReturnPolicy.InputOccurredAfter(shortcutsFinishedUtc, DateTime.UtcNow, NativeMethods.GetIdleSeconds()))
             {
-                _log.Info("Keyboard/mouse input occurred after the lock shortcuts; cancelling workstation lock.");
+                _log.Info("Keyboard/mouse input occurred during or after the lock shortcuts; cancelling workstation lock.");
                 ResetMissingState();
                 SetStatus("使用中 — 锁屏已取消", "重新等键鼠空闲 " + idleRequiredSeconds + " 秒后再检查蓝牙");
                 return;
@@ -536,14 +538,15 @@ namespace BluetoothAutoLock
             return _cfg.LockShortcutsEnabled && _cfg.LockShortcutMappings != null && _cfg.LockShortcutMappings.Count > 0;
         }
 
-        private int TriggerLockShortcuts(bool screenLockFollows)
+        private int TriggerLockShortcuts(bool screenLockFollows, out bool userInputSeen)
         {
             SetStatus("锁定微信/QQ", "正在执行 " + _cfg.LockShortcutMappings.Count + " 个锁屏快捷键" + (screenLockFollows ? "，然后锁屏" : ""));
             return LockShortcutRunner.TriggerAll(
                 _cfg.LockShortcutMappings,
                 _cfg.LockShortcutPreDelayMilliseconds,
                 msg => _log.Info(msg),
-                msg => _log.Warn(msg));
+                msg => _log.Warn(msg),
+                out userInputSeen);
         }
 
         private void WaitBeforeWorkstationLock(int sent)

@@ -29,6 +29,7 @@ namespace BluetoothAutoLock.Tests
                 ChoosesMainWindowFromRealWeChatAndQqLayout();
                 ShortcutRunnerChecksFrontBeforePreShortcut();
                 CaptureStateRecordsHotkeysOwnedByOtherPrograms();
+                InjectionWatchSeparatesUserInputFromOwnKeys();
                 Console.WriteLine("通过：" + _passed + " 项");
                 return 0;
             }
@@ -198,6 +199,8 @@ namespace BluetoothAutoLock.Tests
             Assert(nothingSent >= 0 && nothingSent < appLock, "一个快捷键都没按出去时不能进入“等你回来”，要继续监控");
             int recheck = tick.IndexOf("UserReturnPolicy.InputOccurredAfter(shortcutsFinishedUtc", StringComparison.Ordinal);
             Assert(recheck >= 0 && recheck < lockWorkstation, "按完快捷键后、锁屏前要再确认用户没有回来");
+            int during = tick.IndexOf("userInputDuringShortcuts ||", StringComparison.Ordinal);
+            Assert(during >= 0 && during < lockWorkstation, "快捷键执行过程中用户回来了，也要取消锁屏");
             Pass();
         }
 
@@ -263,7 +266,7 @@ namespace BluetoothAutoLock.Tests
         private static void ShortcutRunnerChecksFrontBeforePreShortcut()
         {
             string source = ReadSource("LockShortcuts.cs");
-            string body = ExtractMethodBody(source, "public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn)");
+            string body = ExtractMethodBody(source, "private static int TriggerAllCore(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn)");
             int front = body.IndexOf("LockShortcutTarget.IsFrontMost(pids)", StringComparison.Ordinal);
             int pre = body.IndexOf("SendShortcut(mapping.PreShortcut)", StringComparison.Ordinal);
             int bring = body.IndexOf("LockShortcutTarget.BringToFront(pids)", StringComparison.Ordinal);
@@ -272,6 +275,8 @@ namespace BluetoothAutoLock.Tests
                 "应先判断目标是否已在最前面，再按前置快捷键，再把目标切到最前面，最后按快捷键");
             int refresh = body.IndexOf("pids = LockShortcutTarget.FindProcessIds(target)", pre, StringComparison.Ordinal);
             Assert(refresh > pre && refresh < bring, "按完前置快捷键后要重新查目标进程，前置键可能拉起新进程");
+            int notRunning = body.IndexOf("is not running", StringComparison.Ordinal);
+            Assert(notRunning > pre, "目标没运行时也要先按前置快捷键，按完还没运行才跳过");
             Pass();
         }
 
@@ -302,8 +307,20 @@ namespace BluetoothAutoLock.Tests
 
             Assert(state.Process(System.Windows.Forms.Keys.Back, true) == ShortcutCaptureAction.Cleared, "单独按 Backspace 应清空");
             Assert(state.Process(System.Windows.Forms.Keys.Escape, true) == ShortcutCaptureAction.Cancelled, "单独按 Esc 应退出录制，键盘不会被一直拦着");
+            state.Process(System.Windows.Forms.Keys.LControlKey, true);
+            Assert(state.Process(System.Windows.Forms.Keys.Escape, true) == ShortcutCaptureAction.Cancelled, "修饰键卡住时按 Esc 也应退出录制");
+            Assert(state.Process(System.Windows.Forms.Keys.W, true) == ShortcutCaptureAction.Captured && state.Captured == "W", "退出录制时应清掉卡住的修饰键");
             Assert(state.Process(System.Windows.Forms.Keys.Tab, true) == ShortcutCaptureAction.PassThrough, "单独按 Tab 应放行，方便切到下一个输入框");
             Assert(state.Process(System.Windows.Forms.Keys.Tab, false) == ShortcutCaptureAction.PassThrough, "Tab 松开也应放行");
+            Pass();
+        }
+
+        private static void InjectionWatchSeparatesUserInputFromOwnKeys()
+        {
+            Assert(!UserReturnPolicy.IsInputAfterInjection(1100, 1000), "程序自己按键后 100ms 内的输入时间不算用户回来");
+            Assert(UserReturnPolicy.IsInputAfterInjection(1300, 1000), "程序按键 300ms 之后出现的输入应算用户回来");
+            Assert(!UserReturnPolicy.IsInputAfterInjection(950, 1000), "早于程序按键的输入不算用户回来");
+            Assert(UserReturnPolicy.IsInputAfterInjection(0x00000100u, 0xFFFFFF00u), "开机计时回绕时也应正确判断");
             Pass();
         }
 

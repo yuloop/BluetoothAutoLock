@@ -319,6 +319,23 @@ namespace BluetoothAutoLock
             try { SetProcessWorkingSetSize(GetCurrentProcess(), new IntPtr(-1), new IntPtr(-1)); } catch { }
         }
 
+        public static bool TryGetLastInputTick(out uint tick)
+        {
+            tick = 0;
+            try
+            {
+                var info = new LASTINPUTINFO();
+                info.cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO));
+                if (!GetLastInputInfo(ref info)) return false;
+                tick = info.dwTime;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public static int GetIdleSeconds()
         {
             try

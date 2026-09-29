@@ -338,7 +338,11 @@ namespace BluetoothAutoLock
             bool noModifiers = !_ctrl && !_alt && !_shift && !_win;
             if (noModifiers && k == Keys.Tab) return ShortcutCaptureAction.PassThrough;
             if (!keyDown) return ShortcutCaptureAction.Swallow;
-            if (noModifiers && k == Keys.Escape) return ShortcutCaptureAction.Cancelled;
+            if (k == Keys.Escape)
+            {
+                Reset();
+                return ShortcutCaptureAction.Cancelled;
+            }
             if (noModifiers && (k == Keys.Back || k == Keys.Delete))
             {
                 Captured = "";
@@ -421,9 +425,66 @@ namespace BluetoothAutoLock
         }
     }
 
+    internal static class InjectedInputWatch
+    {
+        [ThreadStatic] private static bool _active;
+        [ThreadStatic] private static bool _userInputSeen;
+        [ThreadStatic] private static uint _lastInjectedTick;
+
+        public static void Begin()
+        {
+            _active = true;
+            _userInputSeen = false;
+            _lastInjectedTick = NativeMethods.GetTickCount();
+        }
+
+        public static bool End()
+        {
+            if (_active) Check();
+            _active = false;
+            return _userInputSeen;
+        }
+
+        public static void BeforeInjection()
+        {
+            if (_active) Check();
+        }
+
+        public static void AfterInjection()
+        {
+            if (_active) _lastInjectedTick = NativeMethods.GetTickCount();
+        }
+
+        private static void Check()
+        {
+            uint lastInput;
+            if (NativeMethods.TryGetLastInputTick(out lastInput) && UserReturnPolicy.IsInputAfterInjection(lastInput, _lastInjectedTick))
+                _userInputSeen = true;
+        }
+    }
+
     internal static class LockShortcutRunner
     {
         public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn)
+        {
+            bool userInputSeen;
+            return TriggerAll(mappings, preDelayMilliseconds, info, warn, out userInputSeen);
+        }
+
+        public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn, out bool userInputSeen)
+        {
+            InjectedInputWatch.Begin();
+            try
+            {
+                return TriggerAllCore(mappings, preDelayMilliseconds, info, warn);
+            }
+            finally
+            {
+                userInputSeen = InjectedInputWatch.End();
+            }
+        }
+
+        private static int TriggerAllCore(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn)
         {
             if (mappings == null) return 0;
 
@@ -438,12 +499,6 @@ namespace BluetoothAutoLock
                 {
                     string target = mapping.TargetProcess ?? "";
                     HashSet<uint> pids = target.Length == 0 ? null : LockShortcutTarget.FindProcessIds(target);
-                    if (pids != null && pids.Count == 0)
-                    {
-                        if (warn != null) warn("Lock shortcut skipped: " + mapping.ToDisplayText() + note + " | target=" + target + " is not running");
-                        continue;
-                    }
-
                     bool alreadyFront = pids != null && LockShortcutTarget.IsFrontMost(pids);
                     string preText = "";
                     if (!string.IsNullOrWhiteSpace(mapping.PreShortcut))
@@ -463,7 +518,7 @@ namespace BluetoothAutoLock
 
                     if (pids != null && pids.Count == 0)
                     {
-                        if (warn != null) warn("Lock shortcut skipped: " + mapping.ToDisplayText() + note + preText + " | target=" + target + " exited after the pre-shortcut");
+                        if (warn != null) warn("Lock shortcut skipped: " + mapping.ToDisplayText() + note + preText + " | target=" + target + " is not running");
                         continue;
                     }
 
@@ -512,7 +567,9 @@ namespace BluetoothAutoLock
         internal static void SendKey(ushort virtualKey, bool keyUp)
         {
             NativeMethods.INPUT[] arr = { NativeMethods.CreateKeyboardInput(virtualKey, keyUp) };
+            InjectedInputWatch.BeforeInjection();
             NativeMethods.SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(NativeMethods.INPUT)));
+            InjectedInputWatch.AfterInjection();
         }
 
         private static ShortcutSendResult SendShortcut(string shortcut)
@@ -539,7 +596,9 @@ namespace BluetoothAutoLock
                 inputs.Add(NativeMethods.CreateKeyboardInput(down[i], true));
 
             NativeMethods.INPUT[] arr = inputs.ToArray();
+            InjectedInputWatch.BeforeInjection();
             uint written = NativeMethods.SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(NativeMethods.INPUT)));
+            InjectedInputWatch.AfterInjection();
             int lastError = written == arr.Length ? 0 : Marshal.GetLastWin32Error();
             if (written != arr.Length)
                 throw new InvalidOperationException("SendInput 只发送了 " + written + "/" + arr.Length + " 个输入，lastError=" + lastError);
