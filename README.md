@@ -72,7 +72,8 @@ cd D:\xiangmudata\win_bluetooth_auto_scan_lock_on_disconnect
 | **蓝牙离开阈值** | 键盘/鼠标空闲 30 秒后，蓝牙钥匙持续离开多少秒才锁屏 1–3600 |
 | **最终复检次数** | 锁屏前最终蓝牙复检次数，默认 3 |
 | **轮询随机下限** | 最小轮询间隔，实际间隔为该值到 +7 秒随机，默认 8 即 8–15 秒 |
-| **锁屏快捷键** | 锁屏前按序触发的可选快捷键，可备注 |
+| **手机离开后** | 两个独立开关：**锁定 Windows 屏幕**、**执行锁屏快捷键**（如锁定微信/QQ），可以只开一个，也可以都开 |
+| **锁屏快捷键** | 手机离开后按顺序执行。每行可设前置快捷键（如 `Ctrl+Alt+W` 叫出微信）、快捷键（如 `Ctrl+L`）、目标程序（按住 ⊕ 拖到程序窗口上）和备注；选中一行可修改。点进快捷键框（变浅黄）录制时，会先拦下其他程序的同名全局快捷键 |
 | **日志级别** | `Debug` / `Info` / `Warn` / `Error` |
 | **日志路径** | 日志文件位置，父目录自动创建 |
 | **LoL 游戏优化** | 可选：检测到 LoL 启动时，游戏前一次性回收 WSL 缓存、可选禁用虚拟显示器、可选关闭 AskLink / ToDesk，游戏静默 10 分钟后静默恢复 |
@@ -102,8 +103,11 @@ cd D:\xiangmudata\win_bluetooth_auto_scan_lock_on_disconnect
 | `LogPath` | `C:\ProgramData\BluetoothAutoLock\service.log` | 日志路径 |
 | `LogLevel` | `Info` | `Debug`/`Info`/`Warn`/`Error` |
 | `MaxLogSizeMB` | `5` | 超过则轮转到 `<name>.log.1` |
-| `LockShortcutSettleMilliseconds` | `3000` | 触发快捷键后等待多久再锁屏 0–10000 |
-| `LockShortcut1` 等 | _(空)_ | 锁前按序触发 `Ctrl+Alt+K\|备注` |
+| `LockScreenEnabled` | `true` | 手机离开后锁定 Windows 屏幕，和 `LockShortcutsEnabled` 互相独立 |
+| `LockShortcutsEnabled` | `true` | 手机离开后执行锁屏快捷键；不锁屏时只执行一次，等键鼠有真实输入后才重新监控 |
+| `LockShortcutPreDelayMilliseconds` | `1000` | 按完前置快捷键后，等多久再按快捷键 0–10000 |
+| `LockShortcutSettleMilliseconds` | `3000` | 同时开启锁屏时，按完快捷键等多久再锁屏 0–10000 |
+| `LockShortcut1` 等 | _(空)_ | 格式 `前置>快捷键\|备注\|target=程序名`（前置和目标可省略），例如 `Ctrl+Alt+W>Ctrl+L\|锁定微信\|target=Weixin`。目标已在最前面就只按快捷键；否则先按前置快捷键，再把目标窗口还原、切到最前面后按快捷键，切不过去也照样全局按；目标没运行就跳过 |
 | `LolOptimizerEnabled` | `false` | 启用 LoL 游戏模式自动化 |
 | `LolProcessName` | `League of Legends` | LoL 进程名（不含 .exe） |
 | `VirtualDisplayDeviceId` | _(空)_ | 游戏时禁用的显示设备实例 ID |
@@ -203,6 +207,7 @@ Get-Content -Wait 'C:\ProgramData\BluetoothAutoLock\service.log'   # 实时日�
 - 崩溃自启：任务计划每 1 分钟重试，最多 999 次
 - 重锁抑制：蓝牙离开锁屏触发后，解锁 Windows 会话会清除抑制并开启全新“空闲+离开”窗口，不会立刻重锁
 - 安全优先：只要检测到蓝牙钥匙，就不锁，即使 PC 空闲
+- 在场判定：SDP 查询必须返回至少一项服务记录才算手机在旁边；Windows 对联系不上的地址也会返回 Success，只是服务列表为空
 - 活动用户保护：只要近期有键鼠输入，就不锁，即使蓝牙钥匙离开
 - 最终复检：调用 `LockWorkStation` 前做最后蓝牙探测，任一次成功即取消锁屏
 - 日志轮转：单备份 `<log>.1`，不会无限增长
@@ -212,7 +217,7 @@ Get-Content -Wait 'C:\ProgramData\BluetoothAutoLock\service.log'   # 实时日�
 ## 排查
 
 - **`--list` 无输出** 蓝牙未开启或无已配对设备，先在 设置 → 蓝牙 中配对手机
-- **从不锁** 在托盘打开设置，若设备显示 `[已配对]` 而非 `[已连接]`，说明手机未建立活跃蓝牙 Profile，打开一次同步类 App 即可
+- **从不锁** 看日志：出现 `pairedSnapshot=no` 说明手机不在 Windows 配对列表里，需要重新配对；1.1.34 之前的版本会把联系不上的手机误判为在旁边，请升级
 - **使用中却锁了** 不应发生，查看日志是否出现 `not locking while the computer is in use`
 - **编译报 `csc.exe` 找不到** 系统为精简版，需安装 .NET Framework 4.x
 
