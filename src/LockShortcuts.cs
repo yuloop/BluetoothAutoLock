@@ -435,6 +435,8 @@ namespace BluetoothAutoLock
         private IntPtr _mouseHook = IntPtr.Zero;
         private volatile uint _threadId;
         private volatile bool _userInputSeen;
+        private volatile bool _stopRequested;
+        private int _disposed;
 
         public RealInputDetector()
         {
@@ -460,13 +462,16 @@ namespace BluetoothAutoLock
             NativeMethods.MSG message;
             NativeMethods.PeekMessage(out message, IntPtr.Zero, 0, 0, NativeMethods.PM_NOREMOVE);
             _threadId = NativeMethods.GetCurrentThreadId();
-            IntPtr module = NativeMethods.GetModuleHandle(null);
-            _keyboardHook = NativeMethods.SetWindowsHookEx(NativeMethods.WH_KEYBOARD_LL, _keyboardCallback, module, 0);
-            _mouseHook = NativeMethods.SetWindowsHookEx(NativeMethods.WH_MOUSE_LL, _mouseCallback, module, 0);
+            if (!_stopRequested)
+            {
+                IntPtr module = NativeMethods.GetModuleHandle(null);
+                _keyboardHook = NativeMethods.SetWindowsHookEx(NativeMethods.WH_KEYBOARD_LL, _keyboardCallback, module, 0);
+                _mouseHook = NativeMethods.SetWindowsHookEx(NativeMethods.WH_MOUSE_LL, _mouseCallback, module, 0);
+            }
             _ready.Set();
             try
             {
-                while (NativeMethods.GetMessage(out message, IntPtr.Zero, 0, 0) > 0)
+                while (!_stopRequested && NativeMethods.GetMessage(out message, IntPtr.Zero, 0, 0) > 0)
                 {
                 }
             }
@@ -518,6 +523,8 @@ namespace BluetoothAutoLock
 
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+            _stopRequested = true;
             _ready.Wait(5000);
             uint threadId = _threadId;
             if (threadId != 0)
@@ -543,18 +550,19 @@ namespace BluetoothAutoLock
         public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn, out bool userInputSeen)
         {
             var detector = new RealInputDetector();
+            int sent;
             try
             {
                 if (!detector.Watching && warn != null) warn("Real keyboard/mouse input detector could not start; only input after the shortcuts can cancel the workstation lock.");
-                int sent = TriggerAllCore(mappings, preDelayMilliseconds, info, warn);
+                sent = TriggerAllCore(mappings, preDelayMilliseconds, info, warn);
                 Thread.Sleep(100);
-                return sent;
             }
             finally
             {
                 detector.Dispose();
-                userInputSeen = detector.UserInputSeen;
             }
+            userInputSeen = detector.UserInputSeen;
+            return sent;
         }
 
         private static int TriggerAllCore(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn)
