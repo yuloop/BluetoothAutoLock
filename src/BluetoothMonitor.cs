@@ -93,6 +93,8 @@ namespace BluetoothAutoLock
         private DateTime? _missingSince;
         private int _missingProbeCount;
         private DateTime _appLockFinishedUtc = DateTime.MinValue;
+        private bool _appLockDeferred;
+        private volatile bool _wakeRequested;
         private readonly LockLifecycleState _lockLifecycle = new LockLifecycleState();
         private readonly object _statusGate = new object();
         private long _statusSequence;
@@ -246,6 +248,8 @@ namespace BluetoothAutoLock
 
         public void ReArmAfterSessionUnlock()
         {
+            // 不管是不是本程序锁的屏，都立刻叫醒监控线程：Windows 锁着时没锁成的微信/QQ 要马上补锁。
+            _wakeRequested = true;
             if (!_lockLifecycle.RequestRearmAfterSessionUnlock()) return;
 
             _log.Info("Current Windows session unlocked after Bluetooth lock; scheduling a fresh idle-then-Bluetooth-absence window.");
@@ -267,6 +271,7 @@ namespace BluetoothAutoLock
 
             while (!_shouldStop())
             {
+                _wakeRequested = false;
                 try
                 {
                     Tick(DateTime.UtcNow);
@@ -278,7 +283,7 @@ namespace BluetoothAutoLock
 
                 int pollMs = NextPollDelayMs();
                 int elapsed = 0;
-                while (elapsed < pollMs && !_shouldStop())
+                while (elapsed < pollMs && !_shouldStop() && !_wakeRequested)
                 {
                     int slice = Math.Min(250, pollMs - elapsed);
                     Thread.Sleep(slice);
@@ -311,6 +316,12 @@ namespace BluetoothAutoLock
 
             if (_lockLifecycle.IsLockedUntilSessionUnlock)
             {
+                return;
+            }
+
+            if (_appLockDeferred)
+            {
+                RunDeferredAppLock();
                 return;
             }
 
@@ -444,7 +455,7 @@ namespace BluetoothAutoLock
 
             _log.Info("Target absent for " + ((int)missingFor) + "s after keyboard/mouse idle threshold; running final Bluetooth presence check before lock.");
             SetStatus("条件满足 — 锁屏前复核", "最后扫描目标蓝牙并检查键鼠；扫到或使用电脑都会取消");
-            FinalCheckResult finalResult = FinalPresenceCheckBeforeLock(idleRequiredSeconds);
+            FinalCheckResult finalResult = FinalPresenceCheckBeforeLock(idleRequiredSeconds, true);
             if (finalResult == FinalCheckResult.TargetPresent)
             {
                 _log.Info("Final presence check saw the target; cancelling lock.");
@@ -487,11 +498,27 @@ namespace BluetoothAutoLock
             DateTime shortcutsFinishedUtc = DateTime.UtcNow;
             if (lockApps)
             {
-                appLocks = TriggerLockShortcuts(lockScreen, out userInputDuringShortcuts);
+                if (NativeMethods.IsInputDesktopAvailable())
+                {
+                    appLocks = TriggerLockShortcuts(lockScreen, out userInputDuringShortcuts);
+                }
+                else
+                {
+                    // Windows 已经锁屏（例如远程软件断开时锁的），模拟按键送不到微信/QQ；
+                    // 先记下来，Windows 解锁时手机还不在旁边就马上补锁。
+                    _appLockDeferred = true;
+                    _log.Info("Windows is already locked, so shortcuts cannot reach WeChat/QQ; deferring the WeChat/QQ lock until the session unlocks and the target is still away.");
+                }
                 shortcutsFinishedUtc = DateTime.UtcNow;
             }
             if (!lockScreen)
             {
+                if (_appLockDeferred)
+                {
+                    ResetMissingState();
+                    SetDeferredAppLockStatus();
+                    return;
+                }
                 if (userInputDuringShortcuts)
                 {
                     _log.Info("Keyboard/mouse input occurred while running the lock shortcuts; the user is back, keep monitoring.");
@@ -538,6 +565,63 @@ namespace BluetoothAutoLock
                 _log.Warn("LockWorkStation returned false (last error " + System.Runtime.InteropServices.Marshal.GetLastWin32Error() + "); will retry while target remains absent and no keyboard/mouse input occurs.");
                 SetStatus("锁屏失败 — 将重试", "下次轮询仍满足条件时重试");
             }
+        }
+
+        private void RunDeferredAppLock()
+        {
+            if (!LockAppsEnabled())
+            {
+                _appLockDeferred = false;
+                return;
+            }
+            if (!NativeMethods.IsInputDesktopAvailable())
+            {
+                _log.Debug("Windows is still locked; the deferred WeChat/QQ lock waits for the session to unlock.");
+                SetDeferredAppLockStatus();
+                return;
+            }
+
+            _appLockDeferred = false;
+            _log.Info("Windows is unlocked again; checking whether the target is still away before the deferred WeChat/QQ lock.");
+            // 解锁的人正在操作电脑，所以不看键鼠空闲；也不做兜底扫描（要多等 12 秒，
+            // 而且平时扫不到手机），SDP 复核完就尽快锁定。
+            FinalCheckResult result = FinalPresenceCheckBeforeLock(0, false);
+            ResetMissingState();
+            if (result == FinalCheckResult.TargetPresent)
+            {
+                _wasConnected = true;
+                _log.Info("Target is nearby after the unlock; the deferred WeChat/QQ lock is cancelled.");
+                SetStatus("手机在旁边 — 不补锁", "继续监控");
+                return;
+            }
+            _wasConnected = false;
+            if (_shouldStop()) return;
+            if (!NativeMethods.IsInputDesktopAvailable())
+            {
+                _appLockDeferred = true;
+                _log.Info("Windows was locked again during the Bluetooth check; the WeChat/QQ lock stays deferred.");
+                SetDeferredAppLockStatus();
+                return;
+            }
+
+            bool userInputSeen;
+            int appLocks = TriggerLockShortcuts(false, out userInputSeen);
+            if (appLocks == 0)
+            {
+                _log.Warn("Deferred WeChat/QQ lock sent no shortcut (target not running or sending failed); keep monitoring.");
+                SetStatus("补锁微信/QQ 没有成功", "目标程序没运行或按键失败；下一轮蓝牙缺失满阈值后再试");
+                return;
+            }
+            _appLockFinishedUtc = DateTime.UtcNow;
+            _lockLifecycle.MarkAppLockSucceeded();
+            _log.Info("Deferred WeChat/QQ lock finished after the unlock (" + appLocks +
+                " shortcut(s) sent); waiting for keyboard/mouse input before re-arming.");
+            SetStatus("已补锁微信/QQ", "你回来碰键盘鼠标后重新计时");
+        }
+
+        private void SetDeferredAppLockStatus()
+        {
+            SetStatus("Windows 已锁屏 — 解锁后补锁微信/QQ", "Windows 解锁时手机还不在旁边，就马上锁定微信/QQ");
         }
 
         private bool LockAppsEnabled()
@@ -696,7 +780,7 @@ namespace BluetoothAutoLock
             return name + " [" + addr + ", " + kind + rssi + signalSource + "]";
         }
 
-        private FinalCheckResult FinalPresenceCheckBeforeLock(int idleRequiredSeconds)
+        private FinalCheckResult FinalPresenceCheckBeforeLock(int idleRequiredSeconds, bool allowFallbackScan)
         {
             int attempts = FinalRecheckAttempts();
             int waitMs = Math.Max(800, Math.Min(2000, Math.Max(1, _cfg.PollingIntervalSeconds) * 500));
@@ -768,7 +852,7 @@ namespace BluetoothAutoLock
 
             // 2026-09-15 实测:主动扫描会打挂随后 15s 内的 SDP 探测,
             // 所以只在全部 SDP 复核都失败后,做一次兜底扫描。
-            if (!_shouldStop())
+            if (allowFallbackScan && !_shouldStop())
             {
                 int idleBeforeScan = NativeMethods.GetIdleSeconds();
                 if (idleBeforeScan < idleRequiredSeconds)

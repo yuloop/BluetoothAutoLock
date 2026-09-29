@@ -90,6 +90,20 @@ namespace BluetoothAutoLock
         }
     }
 
+    internal static class InputDesktopPolicy
+    {
+        internal const int ErrorAccessDenied = 5;
+
+        // Windows 锁屏（或弹出 UAC 这类安全桌面）时，接收键鼠的是 Winlogon 桌面：
+        // 普通程序打不开它，模拟按键也送不到微信/QQ。判断不了时按“可用”处理，照常去按。
+        internal static bool IsUserDesktop(bool opened, int openError, string desktopName)
+        {
+            if (!opened) return openError != ErrorAccessDenied;
+            return string.IsNullOrEmpty(desktopName) ||
+                string.Equals(desktopName, "Default", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     internal sealed class TargetWindowCandidate
     {
         public IntPtr Handle;

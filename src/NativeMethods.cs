@@ -380,6 +380,45 @@ namespace BluetoothAutoLock
             }
         }
 
+        private const uint DESKTOP_READOBJECTS = 0x0001;
+        private const int UOI_NAME = 2;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr OpenInputDesktop(uint dwFlags, [MarshalAs(UnmanagedType.Bool)] bool fInherit, uint dwDesiredAccess);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CloseDesktop(IntPtr hDesktop);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex, StringBuilder pvInfo, int nLength, out int lpnLengthNeeded);
+
+        public static bool IsInputDesktopAvailable()
+        {
+            try
+            {
+                IntPtr desktop = OpenInputDesktop(0, false, DESKTOP_READOBJECTS);
+                if (desktop == IntPtr.Zero)
+                    return InputDesktopPolicy.IsUserDesktop(false, Marshal.GetLastWin32Error(), null);
+                try
+                {
+                    var name = new StringBuilder(256);
+                    int needed;
+                    bool named = GetUserObjectInformation(desktop, UOI_NAME, name, name.Capacity * 2, out needed);
+                    return InputDesktopPolicy.IsUserDesktop(true, 0, named ? name.ToString() : null);
+                }
+                finally
+                {
+                    CloseDesktop(desktop);
+                }
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
         public static INPUT CreateKeyboardInput(ushort virtualKey, bool keyUp)
         {
             var input = new INPUT();

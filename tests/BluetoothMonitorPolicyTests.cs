@@ -23,6 +23,7 @@ namespace BluetoothAutoLock.Tests
                 SessionHandlerRequiresActualUnlock();
                 SdpPresenceRequiresServiceRecords();
                 AppLockWaitsForUserReturn();
+                DeferredAppLockRunsAfterUnlock();
                 UserReturnIgnoresInjectedInput();
                 LeaveActionsRespectToggles();
                 ParsesPreShortcutMapping();
@@ -103,7 +104,7 @@ namespace BluetoothAutoLock.Tests
             string tick = ExtractMethodBody(source, "private void Tick(DateTime nowUtc)");
             Assert(!tick.Contains("FindClassicTargetByAddress"), "Tick 不得在 SDP 探测路径中插入主动扫描");
 
-            string final = ExtractMethodBody(source, "private FinalCheckResult FinalPresenceCheckBeforeLock(int idleRequiredSeconds)");
+            string final = ExtractMethodBody(source, "private FinalCheckResult FinalPresenceCheckBeforeLock(int idleRequiredSeconds, bool allowFallbackScan)");
             Assert(final.Contains("Final active scan saw target"), "终复核必须保留一次兜底主动扫描");
             string[] parts = final.Split(new string[] { "FindClassicTargetByAddress" }, StringSplitOptions.None);
             Assert(parts.Length - 1 == 1, "终复核中的兜底扫描只允许出现一次");
@@ -169,6 +170,40 @@ namespace BluetoothAutoLock.Tests
 
             state.MarkLockSucceeded();
             Assert(!state.RearmAfterUserReturn(), "锁屏后只能由 Windows 解锁事件重新开始，键鼠输入不算");
+            Pass();
+        }
+
+        private static void DeferredAppLockRunsAfterUnlock()
+        {
+            Assert(!InputDesktopPolicy.IsUserDesktop(false, 5, null), "Windows 锁屏时打不开接收键鼠的桌面（拒绝访问），按键送不到微信/QQ");
+            Assert(!InputDesktopPolicy.IsUserDesktop(true, 0, "Winlogon"), "接收键鼠的是 Winlogon 桌面时，按键送不到微信/QQ");
+            Assert(InputDesktopPolicy.IsUserDesktop(true, 0, "Default"), "正常桌面可以直接按快捷键");
+            Assert(InputDesktopPolicy.IsUserDesktop(false, 6, null) && InputDesktopPolicy.IsUserDesktop(true, 0, null),
+                "判断不了时按可用处理，照常去按，不能因此一直不锁");
+
+            string source = ReadSource("BluetoothMonitor.cs");
+            string tick = ExtractMethodBody(source, "private void Tick(DateTime nowUtc)");
+            int guard = tick.IndexOf("_lockLifecycle.IsLockedUntilSessionUnlock", StringComparison.Ordinal);
+            int deferred = tick.IndexOf("if (_appLockDeferred)", StringComparison.Ordinal);
+            int firstProbe = tick.IndexOf("NativeMethods.TryParseBluetoothAddress", StringComparison.Ordinal);
+            Assert(guard >= 0 && deferred > guard && deferred < firstProbe, "有待补锁时先处理补锁，不再跑普通的蓝牙缺失计时");
+            int desktopCheck = tick.IndexOf("NativeMethods.IsInputDesktopAvailable()", StringComparison.Ordinal);
+            int trigger = tick.IndexOf("TriggerLockShortcuts(", StringComparison.Ordinal);
+            Assert(desktopCheck >= 0 && desktopCheck < trigger, "按快捷键前要先确认 Windows 没有锁屏");
+            Assert(tick.Contains("_appLockDeferred = true;"), "Windows 锁着时要记下待补锁");
+
+            string relock = ExtractMethodBody(source, "private void RunDeferredAppLock()");
+            int wait = relock.IndexOf("NativeMethods.IsInputDesktopAvailable()", StringComparison.Ordinal);
+            int check = relock.IndexOf("FinalPresenceCheckBeforeLock(0, false)", StringComparison.Ordinal);
+            int lockApps = relock.IndexOf("TriggerLockShortcuts(", StringComparison.Ordinal);
+            Assert(wait >= 0 && check > wait && lockApps > check, "解锁后先确认手机不在旁边再补锁；解锁的人正在操作，不能看键鼠空闲");
+
+            string unlock = ExtractMethodBody(source, "public void ReArmAfterSessionUnlock()");
+            int wake = unlock.IndexOf("_wakeRequested = true;", StringComparison.Ordinal);
+            int rearm = unlock.IndexOf("RequestRearmAfterSessionUnlock()", StringComparison.Ordinal);
+            Assert(wake >= 0 && wake < rearm, "Windows 一解锁就叫醒监控线程，不管是不是本程序锁的屏");
+            string loop = ExtractMethodBody(source, "public void RunLoop()");
+            Assert(loop.Contains("!_wakeRequested"), "监控线程等待时要能被解锁事件提前叫醒");
             Pass();
         }
 
