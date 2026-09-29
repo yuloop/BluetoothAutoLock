@@ -390,8 +390,9 @@ namespace BluetoothAutoLock
         [DllImport("wtsapi32.dll")]
         private static extern void WTSFreeMemory(IntPtr pMemory);
 
-        // WtsApi32.h 的 WTSINFOEXW / WTSINFOEX_LEVEL1_W：名字都是定长字符数组，没有指针，
-        // 所以 x86 和 x64 的布局一样（x64 实测 232 字节，SessionFlags 在偏移 16）。
+        // 与 Windows SDK（WtsApi32.h）的 WTSINFOEXW / WTSINFOEX_LEVEL1_W 一致：WinStationName[33]、UserName[21]、
+        // DomainName[18]（DOMAIN_LENGTH=17）都是定长字符数组，没有指针，所以 x86 和 x64 的布局一样
+        // （x64 实测 232 字节，SessionFlags 在偏移 16）。这里只用它算字段偏移，不整体封送。
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         public struct WTSINFOEX_LEVEL1
         {
@@ -429,12 +430,13 @@ namespace BluetoothAutoLock
             IntPtr buffer = IntPtr.Zero;
             try
             {
+                int flagsOffset = (int)Marshal.OffsetOf(typeof(WTSINFOEX), "Data") +
+                    (int)Marshal.OffsetOf(typeof(WTSINFOEX_LEVEL1), "SessionFlags");
                 int bytes;
                 if (!WTSQuerySessionInformation(IntPtr.Zero, WTS_CURRENT_SESSION, WTSSessionInfoEx, out buffer, out bytes) ||
-                    buffer == IntPtr.Zero || bytes < Marshal.SizeOf(typeof(WTSINFOEX)))
+                    buffer == IntPtr.Zero || bytes < flagsOffset + 4)
                     return false;
-                var info = (WTSINFOEX)Marshal.PtrToStructure(buffer, typeof(WTSINFOEX));
-                return SessionLockPolicy.IsLocked(info.Level, info.Data.SessionFlags);
+                return SessionLockPolicy.IsLocked(Marshal.ReadInt32(buffer), Marshal.ReadInt32(buffer, flagsOffset));
             }
             catch
             {
