@@ -281,7 +281,7 @@ namespace BluetoothAutoLock
                             {
                                 if (status2 != AsyncStatus.Completed) { transient = true; return; }
                                 RfcommDeviceServicesResult res = op2.GetResults();
-                                result = (res.Error == BluetoothError.Success);
+                                result = res.Error == BluetoothError.Success && res.Services.Count > 0;
                             }
                             catch { transient = true; }
                             finally

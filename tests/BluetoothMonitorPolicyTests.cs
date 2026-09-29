@@ -20,6 +20,7 @@ namespace BluetoothAutoLock.Tests
                 ScannerDelegatesToRssiPolicy();
                 MonitorUsesLifecycleGuardBeforeProbing();
                 SessionHandlerRequiresActualUnlock();
+                SdpPresenceRequiresServiceRecords();
                 Console.WriteLine("通过：" + _passed + " 项");
                 return 0;
             }
@@ -129,6 +130,20 @@ namespace BluetoothAutoLock.Tests
             string body = ExtractMethodBody(source, "private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)");
             Assert(body.Contains("e.Reason != SessionSwitchReason.SessionUnlock"), "只应接受 SessionUnlock 事件");
             Assert(!body.Contains("SessionSwitchReason.SessionLogon"), "SessionLogon 不能解除自动锁屏抑制");
+            Pass();
+        }
+
+        private static void SdpPresenceRequiresServiceRecords()
+        {
+            string scanner = ReadSource("WinRtBluetooth.cs");
+            string probe = ExtractMethodBody(scanner, "public static bool? IsInRange(ulong address, int timeoutMs)");
+            Assert(probe.Contains("res.Error == BluetoothError.Success && res.Services.Count > 0"),
+                "SDP 必须返回至少一项服务记录才算在场：手机不在时 Windows 也回 Success，只是服务列表为空");
+
+            string monitor = ReadSource("BluetoothMonitor.cs");
+            string evidence = ExtractMethodBody(monitor, "private PresenceEvidence ProbePassivePresence(DeviceSnapshot target, ulong configuredAddress, int timeoutMs, bool allowPreviousPresenceOnTransient)");
+            Assert(!evidence.Contains("evidence.SdpProbe.Value && target.Connected"),
+                "已配对手机在旁边时 fConnected 通常为 false，SDP 有服务记录即应视为在场，不得再要求 fConnected");
             Pass();
         }
 
