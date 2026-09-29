@@ -43,6 +43,8 @@ namespace BluetoothAutoLock
         private Label _lockShortcutFinder;
         private Button _lockShortcutUpdateBtn;
         private bool _findingTarget;
+        private ShortcutCaptureHook _captureHook;
+        private TextBox _captureHookTarget;
         private CheckBox _lockScreenChk;
         private CheckBox _lockAppsChk;
         private readonly List<LockShortcutMapping> _lockShortcutMappings = new List<LockShortcutMapping>();
@@ -372,7 +374,12 @@ namespace BluetoothAutoLock
             };
             _lockShortcutPreCaptureText.KeyDown += CaptureLockShortcutKeyDown;
             _lockShortcutPreCaptureText.KeyUp += CaptureLockShortcutKeyUp;
-            _lockShortcutPreCaptureText.Leave += (s, e) => _lockShortcutWinDown = false;
+            _lockShortcutPreCaptureText.Enter += (s, e) => StartShortcutCapture(_lockShortcutPreCaptureText);
+            _lockShortcutPreCaptureText.Leave += (s, e) =>
+            {
+                _lockShortcutWinDown = false;
+                StopShortcutCapture();
+            };
             tab.Controls.Add(_lockShortcutPreCaptureText);
             tab.Controls.Add(new Label
             {
@@ -397,8 +404,22 @@ namespace BluetoothAutoLock
             };
             _lockShortcutCaptureText.KeyDown += CaptureLockShortcutKeyDown;
             _lockShortcutCaptureText.KeyUp += CaptureLockShortcutKeyUp;
-            _lockShortcutCaptureText.Leave += (s, e) => _lockShortcutWinDown = false;
+            _lockShortcutCaptureText.Enter += (s, e) => StartShortcutCapture(_lockShortcutCaptureText);
+            _lockShortcutCaptureText.Leave += (s, e) =>
+            {
+                _lockShortcutWinDown = false;
+                StopShortcutCapture();
+            };
             tab.Controls.Add(_lockShortcutCaptureText);
+
+            _captureHook = new ShortcutCaptureHook(OnHookShortcutCaptured, OnHookShortcutCleared);
+            Deactivate += (s, e) => StopShortcutCapture();
+            Activated += (s, e) =>
+            {
+                if (_lockShortcutPreCaptureText.Focused) StartShortcutCapture(_lockShortcutPreCaptureText);
+                else if (_lockShortcutCaptureText.Focused) StartShortcutCapture(_lockShortcutCaptureText);
+            };
+            FormClosed += (s, e) => _captureHook.Dispose();
 
             tab.Controls.Add(new Label { Text = "备注：", Left = left + 288, Top = y + 4, Width = 48, Font = normalFont });
             _lockShortcutNoteText = new TextBox
@@ -521,6 +542,50 @@ namespace BluetoothAutoLock
             tab.Controls.Add(_lockShortcutStatusLabel);
 
             UpdateLockShortcutButtons();
+        }
+
+        private void StartShortcutCapture(TextBox box)
+        {
+            if (_captureHook == null || box == null) return;
+            _captureHookTarget = box;
+            if (!_captureHook.Start()) return;
+            box.BackColor = Color.LightYellow;
+            SetLockShortcutStatus("正在录制：直接按组合键。录制时会先拦下其他程序的同名快捷键，单独按 Backspace 清空。", Color.FromArgb(0, 96, 160));
+        }
+
+        private void StopShortcutCapture()
+        {
+            if (_captureHook != null) _captureHook.Stop();
+            if (_captureHookTarget != null) _captureHookTarget.ResetBackColor();
+            _captureHookTarget = null;
+        }
+
+        private void OnHookShortcutCaptured(string shortcut)
+        {
+            if (_captureHookTarget == _lockShortcutPreCaptureText)
+            {
+                _capturedPreShortcut = shortcut;
+                _lockShortcutPreCaptureText.Text = shortcut;
+            }
+            else if (_captureHookTarget == _lockShortcutCaptureText)
+            {
+                _capturedLockShortcut = shortcut;
+                _lockShortcutCaptureText.Text = shortcut;
+            }
+        }
+
+        private void OnHookShortcutCleared()
+        {
+            if (_captureHookTarget == _lockShortcutPreCaptureText)
+            {
+                _capturedPreShortcut = "";
+                _lockShortcutPreCaptureText.Text = PreCapturePlaceholder;
+            }
+            else if (_captureHookTarget == _lockShortcutCaptureText)
+            {
+                _capturedLockShortcut = "";
+                _lockShortcutCaptureText.Text = "点击后按快捷键";
+            }
         }
 
         private void CaptureLockShortcutKeyDown(object sender, KeyEventArgs e)

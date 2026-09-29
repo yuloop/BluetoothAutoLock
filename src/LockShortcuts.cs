@@ -300,6 +300,122 @@ namespace BluetoothAutoLock
         }
     }
 
+    internal enum ShortcutCaptureAction
+    {
+        PassThrough,
+        Swallow,
+        Captured,
+        Cleared
+    }
+
+    internal sealed class ShortcutCaptureState
+    {
+        private bool _ctrl;
+        private bool _alt;
+        private bool _shift;
+        private bool _win;
+
+        public string Captured { get; private set; }
+
+        public void Reset()
+        {
+            _ctrl = false;
+            _alt = false;
+            _shift = false;
+            _win = false;
+            Captured = "";
+        }
+
+        public ShortcutCaptureAction Process(Keys key, bool keyDown)
+        {
+            Keys k = key & Keys.KeyCode;
+            if (k == Keys.ControlKey || k == Keys.LControlKey || k == Keys.RControlKey) { _ctrl = keyDown; return ShortcutCaptureAction.Swallow; }
+            if (k == Keys.Menu || k == Keys.LMenu || k == Keys.RMenu) { _alt = keyDown; return ShortcutCaptureAction.Swallow; }
+            if (k == Keys.ShiftKey || k == Keys.LShiftKey || k == Keys.RShiftKey) { _shift = keyDown; return ShortcutCaptureAction.Swallow; }
+            if (k == Keys.LWin || k == Keys.RWin) { _win = keyDown; return ShortcutCaptureAction.Swallow; }
+
+            bool noModifiers = !_ctrl && !_alt && !_shift && !_win;
+            if (noModifiers && k == Keys.Tab) return ShortcutCaptureAction.PassThrough;
+            if (!keyDown) return ShortcutCaptureAction.Swallow;
+            if (noModifiers && (k == Keys.Back || k == Keys.Delete))
+            {
+                Captured = "";
+                return ShortcutCaptureAction.Cleared;
+            }
+
+            Keys modifiers = Keys.None;
+            if (_ctrl) modifiers |= Keys.Control;
+            if (_alt) modifiers |= Keys.Alt;
+            if (_shift) modifiers |= Keys.Shift;
+
+            string shortcut;
+            if (!LockShortcutMapping.TryFromKeyEvent(k, modifiers, _win, out shortcut)) return ShortcutCaptureAction.Swallow;
+            Captured = shortcut;
+            return ShortcutCaptureAction.Captured;
+        }
+    }
+
+    internal sealed class ShortcutCaptureHook : IDisposable
+    {
+        private readonly NativeMethods.LowLevelKeyboardProc _callback;
+        private readonly ShortcutCaptureState _state = new ShortcutCaptureState();
+        private readonly Action<string> _captured;
+        private readonly Action _cleared;
+        private IntPtr _hook = IntPtr.Zero;
+
+        public ShortcutCaptureHook(Action<string> captured, Action cleared)
+        {
+            _captured = captured;
+            _cleared = cleared;
+            _callback = HookCallback;
+        }
+
+        public bool Start()
+        {
+            _state.Reset();
+            if (_hook != IntPtr.Zero) return true;
+            _hook = NativeMethods.SetWindowsHookEx(NativeMethods.WH_KEYBOARD_LL, _callback, NativeMethods.GetModuleHandle(null), 0);
+            return _hook != IntPtr.Zero;
+        }
+
+        public void Stop()
+        {
+            if (_hook == IntPtr.Zero) return;
+            NativeMethods.UnhookWindowsHookEx(_hook);
+            _hook = IntPtr.Zero;
+            _state.Reset();
+        }
+
+        public void Dispose()
+        {
+            Stop();
+        }
+
+        private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0)
+            {
+                try
+                {
+                    var data = (NativeMethods.KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(NativeMethods.KBDLLHOOKSTRUCT));
+                    if ((data.flags & NativeMethods.LLKHF_INJECTED) == 0)
+                    {
+                        int message = wParam.ToInt32();
+                        bool keyDown = message == NativeMethods.WM_KEYDOWN || message == NativeMethods.WM_SYSKEYDOWN;
+                        ShortcutCaptureAction action = _state.Process((Keys)data.vkCode, keyDown);
+                        if (action == ShortcutCaptureAction.Captured && _captured != null) _captured(_state.Captured);
+                        else if (action == ShortcutCaptureAction.Cleared && _cleared != null) _cleared();
+                        if (action != ShortcutCaptureAction.PassThrough) return new IntPtr(1);
+                    }
+                }
+                catch
+                {
+                }
+            }
+            return NativeMethods.CallNextHookEx(_hook, nCode, wParam, lParam);
+        }
+    }
+
     internal static class LockShortcutRunner
     {
         public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn)

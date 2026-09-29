@@ -28,6 +28,7 @@ namespace BluetoothAutoLock.Tests
                 ParsesPreShortcutMapping();
                 ChoosesMainWindowFromRealWeChatAndQqLayout();
                 ShortcutRunnerChecksFrontBeforePreShortcut();
+                CaptureStateRecordsHotkeysOwnedByOtherPrograms();
                 Console.WriteLine("通过：" + _passed + " 项");
                 return 0;
             }
@@ -275,6 +276,37 @@ namespace BluetoothAutoLock.Tests
             int main = body.IndexOf("SendShortcut(mapping.Shortcut)", StringComparison.Ordinal);
             Assert(front >= 0 && pre > front && bring > pre && main > bring,
                 "应先判断目标是否已在最前面，再按前置快捷键，再把目标切到最前面，最后按快捷键");
+            Pass();
+        }
+
+        private static void CaptureStateRecordsHotkeysOwnedByOtherPrograms()
+        {
+            var state = new ShortcutCaptureState();
+            state.Reset();
+            Assert(state.Process(System.Windows.Forms.Keys.LControlKey, true) == ShortcutCaptureAction.Swallow, "录制时按下 Ctrl 应先拦下");
+            Assert(state.Process(System.Windows.Forms.Keys.LMenu, true) == ShortcutCaptureAction.Swallow, "录制时按下 Alt 应先拦下");
+            Assert(state.Process(System.Windows.Forms.Keys.W, true) == ShortcutCaptureAction.Captured && state.Captured == "Ctrl+Alt+W",
+                "微信占用的 Ctrl+Alt+W 应能录下来");
+            Assert(state.Process(System.Windows.Forms.Keys.W, false) == ShortcutCaptureAction.Swallow, "松开按键也应拦下，不漏给微信");
+            state.Process(System.Windows.Forms.Keys.LMenu, false);
+            state.Process(System.Windows.Forms.Keys.LControlKey, false);
+
+            Assert(state.Process(System.Windows.Forms.Keys.RMenu, true) == ShortcutCaptureAction.Swallow, "右 Alt 也应算 Alt");
+            state.Process(System.Windows.Forms.Keys.RShiftKey, true);
+            Assert(state.Process(System.Windows.Forms.Keys.P, true) == ShortcutCaptureAction.Captured && state.Captured == "Alt+Shift+P",
+                "QQ 占用的 Alt+Shift+P 应能录下来");
+            state.Process(System.Windows.Forms.Keys.P, false);
+            state.Process(System.Windows.Forms.Keys.RShiftKey, false);
+            state.Process(System.Windows.Forms.Keys.RMenu, false);
+
+            state.Process(System.Windows.Forms.Keys.LWin, true);
+            Assert(state.Process(System.Windows.Forms.Keys.D, true) == ShortcutCaptureAction.Captured && state.Captured == "Win+D", "Win 组合键应能录下来");
+            state.Process(System.Windows.Forms.Keys.D, false);
+            state.Process(System.Windows.Forms.Keys.LWin, false);
+
+            Assert(state.Process(System.Windows.Forms.Keys.Back, true) == ShortcutCaptureAction.Cleared, "单独按 Backspace 应清空");
+            Assert(state.Process(System.Windows.Forms.Keys.Tab, true) == ShortcutCaptureAction.PassThrough, "单独按 Tab 应放行，方便切到下一个输入框");
+            Assert(state.Process(System.Windows.Forms.Keys.Tab, false) == ShortcutCaptureAction.PassThrough, "Tab 松开也应放行");
             Pass();
         }
 
