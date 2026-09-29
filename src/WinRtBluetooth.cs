@@ -132,18 +132,12 @@ namespace BluetoothAutoLock
             int boundedSeconds = Math.Max(1, Math.Min(12, seconds));
             List<ScanHit> hits = Scan(boundedSeconds);
 
-            // Do not treat Windows' remembered AEP cache as proof that the
-            // device is nearby. In practice an offline paired phone can still
-            // be returned as Classic + RSSI 0 + connected=false. Count only
-            // fresh Classic radio evidence for the configured unique address.
-            // Do not accept IsConnected alone here: Windows can keep a remembered
-            // Classic AEP endpoint marked connected while reporting sentinel RSSI
-            // values such as -128/-127/0.  Treat those weak/cache-only hits as
-            // non-presence so they cannot reset the absence window forever.
+            // Windows 有时只在 AEP Added 事件中返回 Classic 的真实 RSSI，随后并不会
+            // 产生 Updated 事件。此时 LiveSignal=false 仍可能是手机就在旁边的强信号，
+            // 不能据此丢弃；离线缓存则以 0/-127/-128 等哨兵 RSSI 排除。
             //
-            // Do not fall back to device-name matching: phones can expose separate
-            // BLE identities with the same display name after the Classic radio is off.
-            return FindMatchingAddressHit(hits, address, HasFreshClassicRadioEvidence);
+            // 不回退到名称匹配：手机关闭 Classic 后可能仍暴露同名的其他 BLE 身份。
+            return FindMatchingAddressHit(hits, address, HasCredibleClassicRadioEvidence);
         }
 
         private static ScanHit FindMatchingAddressHit(List<ScanHit> hits, ulong address, Func<ScanHit, bool> accept)
@@ -153,24 +147,11 @@ namespace BluetoothAutoLock
             return null;
         }
 
-        // Classic 蓝牙真实 RSSI 范围 ≈ -100 ~ -1 dBm。低于 -100 不可能是真实信号：
-        //   - Microsoft 文档：-127 是 BLE Watcher 的 "out of range" 哨兵；
-        //   - -128 是有符号字节下限，AEP 缓存层在"已知设备但无当前信号"时常见回填值；
-        //   - 物理灵敏度极限 ≈ -100 ~ -103 dBm，再低就是噪声/哨兵。
-        // 手机蓝牙关闭后，Windows 仍会以这些值在 Updated 事件里回报，
-        // 一旦把哨兵当作真实信号，主动扫描就会误判"在附近"，从而永远不锁屏。
-        private const short RssiPhysicalNoiseFloor = -100;
-
-        private static bool HasFreshClassicRadioEvidence(ScanHit hit)
+        private static bool HasCredibleClassicRadioEvidence(ScanHit hit)
         {
-            if (hit == null) return false;
-            if (!IsClassic(hit)) return false;
-            if (!hit.LiveSignal) return false;
-            if (!hit.RssiDbm.HasValue) return false;
-            short rssi = hit.RssiDbm.Value;
-            if (rssi == 0) return false;
-            if (rssi <= RssiPhysicalNoiseFloor) return false;
-            return true;
+            return hit != null &&
+                IsClassic(hit) &&
+                ClassicBluetoothEvidence.HasCredibleRssi(hit.RssiDbm);
         }
 
         private static bool IsClassic(ScanHit hit)

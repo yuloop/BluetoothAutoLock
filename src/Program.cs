@@ -11,7 +11,7 @@ namespace BluetoothAutoLock
         private static NativeMethods.ConsoleCtrlDelegate _ctrlHandler;
         private static Mutex _singleInstanceMutex;
 
-        public const string Version = "1.1.28";
+        public const string Version = "1.1.33";
         private const string SingleInstanceMutexName = @"Local\BluetoothAutoLock";
 
         [STAThread]

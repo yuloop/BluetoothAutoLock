@@ -479,9 +479,9 @@ namespace BluetoothAutoLock
 
         private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
         {
-            if (e == null) return;
-            if (e.Reason != SessionSwitchReason.SessionUnlock &&
-                e.Reason != SessionSwitchReason.SessionLogon)
+            // .NET Framework 的 SessionSwitchEventArgs 只公开当前用户的事件原因，
+            // 不提供 Session ID；此处只接受实际解锁，不能把登录事件当成解锁。
+            if (e == null || e.Reason != SessionSwitchReason.SessionUnlock)
                 return;
 
             BluetoothMonitor monitor;

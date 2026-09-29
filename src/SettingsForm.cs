@@ -1055,9 +1055,8 @@ namespace BluetoothAutoLock
 
         private static bool HasNearbyClassicEvidence(ScanHit hit)
         {
-            if (!IsClassicHit(hit)) return false;
-            if (hit.Connected.HasValue && hit.Connected.Value) return true;
-            return hit.LiveSignal && hit.RssiDbm.HasValue && hit.RssiDbm.Value != 0;
+            return IsClassicHit(hit) &&
+                ClassicBluetoothEvidence.HasCredibleRssi(hit.RssiDbm);
         }
 
         private static int CompareDeviceItems(DeviceItem a, DeviceItem b)
