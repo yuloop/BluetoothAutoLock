@@ -425,41 +425,95 @@ namespace BluetoothAutoLock
         }
     }
 
-    internal static class InjectedInputWatch
+    internal sealed class RealInputDetector : IDisposable
     {
-        [ThreadStatic] private static bool _active;
-        [ThreadStatic] private static bool _userInputSeen;
-        [ThreadStatic] private static uint _lastInjectedTick;
+        private readonly NativeMethods.LowLevelKeyboardProc _keyboardCallback;
+        private readonly NativeMethods.LowLevelKeyboardProc _mouseCallback;
+        private readonly ManualResetEventSlim _ready = new ManualResetEventSlim(false);
+        private readonly Thread _thread;
+        private IntPtr _keyboardHook = IntPtr.Zero;
+        private IntPtr _mouseHook = IntPtr.Zero;
+        private volatile uint _threadId;
+        private volatile bool _userInputSeen;
 
-        public static void Begin()
+        public RealInputDetector()
         {
-            _active = true;
-            _userInputSeen = false;
-            _lastInjectedTick = NativeMethods.GetTickCount();
+            _keyboardCallback = KeyboardCallback;
+            _mouseCallback = MouseCallback;
+            _thread = new Thread(Run) { IsBackground = true, Name = "RealInputDetector" };
+            _thread.Start();
+            _ready.Wait(2000);
         }
 
-        public static bool End()
+        public bool UserInputSeen
         {
-            if (_active) Check();
-            _active = false;
-            return _userInputSeen;
+            get { return _userInputSeen; }
         }
 
-        public static void BeforeInjection()
+        public bool Watching
         {
-            if (_active) Check();
+            get { return _keyboardHook != IntPtr.Zero && _mouseHook != IntPtr.Zero; }
         }
 
-        public static void AfterInjection()
+        private void Run()
         {
-            if (_active) _lastInjectedTick = NativeMethods.GetTickCount();
+            NativeMethods.MSG message;
+            NativeMethods.PeekMessage(out message, IntPtr.Zero, 0, 0, NativeMethods.PM_NOREMOVE);
+            _threadId = NativeMethods.GetCurrentThreadId();
+            IntPtr module = NativeMethods.GetModuleHandle(null);
+            _keyboardHook = NativeMethods.SetWindowsHookEx(NativeMethods.WH_KEYBOARD_LL, _keyboardCallback, module, 0);
+            _mouseHook = NativeMethods.SetWindowsHookEx(NativeMethods.WH_MOUSE_LL, _mouseCallback, module, 0);
+            _ready.Set();
+            try
+            {
+                while (NativeMethods.GetMessage(out message, IntPtr.Zero, 0, 0) > 0)
+                {
+                }
+            }
+            finally
+            {
+                if (_keyboardHook != IntPtr.Zero) NativeMethods.UnhookWindowsHookEx(_keyboardHook);
+                if (_mouseHook != IntPtr.Zero) NativeMethods.UnhookWindowsHookEx(_mouseHook);
+            }
         }
 
-        private static void Check()
+        private IntPtr KeyboardCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            uint lastInput;
-            if (NativeMethods.TryGetLastInputTick(out lastInput) && UserReturnPolicy.IsInputAfterInjection(lastInput, _lastInjectedTick))
-                _userInputSeen = true;
+            if (nCode >= 0)
+            {
+                try
+                {
+                    var data = (NativeMethods.KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(NativeMethods.KBDLLHOOKSTRUCT));
+                    if ((data.flags & NativeMethods.LLKHF_INJECTED) == 0) _userInputSeen = true;
+                }
+                catch
+                {
+                }
+            }
+            return NativeMethods.CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
+        }
+
+        private IntPtr MouseCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0)
+            {
+                try
+                {
+                    var data = (NativeMethods.MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(NativeMethods.MSLLHOOKSTRUCT));
+                    if ((data.flags & NativeMethods.LLMHF_INJECTED) == 0) _userInputSeen = true;
+                }
+                catch
+                {
+                }
+            }
+            return NativeMethods.CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+        }
+
+        public void Dispose()
+        {
+            _ready.Wait(5000);
+            if (_threadId != 0) NativeMethods.PostThreadMessage(_threadId, NativeMethods.WM_QUIT, IntPtr.Zero, IntPtr.Zero);
+            _thread.Join(2000);
         }
     }
 
@@ -473,14 +527,12 @@ namespace BluetoothAutoLock
 
         public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn, out bool userInputSeen)
         {
-            InjectedInputWatch.Begin();
-            try
+            using (var detector = new RealInputDetector())
             {
-                return TriggerAllCore(mappings, preDelayMilliseconds, info, warn);
-            }
-            finally
-            {
-                userInputSeen = InjectedInputWatch.End();
+                if (!detector.Watching && warn != null) warn("Real keyboard/mouse input detector could not start; only input after the shortcuts can cancel the workstation lock.");
+                int sent = TriggerAllCore(mappings, preDelayMilliseconds, info, warn);
+                userInputSeen = detector.UserInputSeen;
+                return sent;
             }
         }
 
@@ -567,9 +619,7 @@ namespace BluetoothAutoLock
         internal static void SendKey(ushort virtualKey, bool keyUp)
         {
             NativeMethods.INPUT[] arr = { NativeMethods.CreateKeyboardInput(virtualKey, keyUp) };
-            InjectedInputWatch.BeforeInjection();
             NativeMethods.SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(NativeMethods.INPUT)));
-            InjectedInputWatch.AfterInjection();
         }
 
         private static ShortcutSendResult SendShortcut(string shortcut)
@@ -596,9 +646,7 @@ namespace BluetoothAutoLock
                 inputs.Add(NativeMethods.CreateKeyboardInput(down[i], true));
 
             NativeMethods.INPUT[] arr = inputs.ToArray();
-            InjectedInputWatch.BeforeInjection();
             uint written = NativeMethods.SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(NativeMethods.INPUT)));
-            InjectedInputWatch.AfterInjection();
             int lastError = written == arr.Length ? 0 : Marshal.GetLastWin32Error();
             if (written != arr.Length)
                 throw new InvalidOperationException("SendInput 只发送了 " + written + "/" + arr.Length + " 个输入，lastError=" + lastError);

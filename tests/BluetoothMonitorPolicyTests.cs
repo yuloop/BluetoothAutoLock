@@ -29,7 +29,7 @@ namespace BluetoothAutoLock.Tests
                 ChoosesMainWindowFromRealWeChatAndQqLayout();
                 ShortcutRunnerChecksFrontBeforePreShortcut();
                 CaptureStateRecordsHotkeysOwnedByOtherPrograms();
-                InjectionWatchSeparatesUserInputFromOwnKeys();
+                RealInputDetectorIgnoresInjectedInput();
                 Console.WriteLine("通过：" + _passed + " 项");
                 return 0;
             }
@@ -201,6 +201,8 @@ namespace BluetoothAutoLock.Tests
             Assert(recheck >= 0 && recheck < lockWorkstation, "按完快捷键后、锁屏前要再确认用户没有回来");
             int during = tick.IndexOf("userInputDuringShortcuts ||", StringComparison.Ordinal);
             Assert(during >= 0 && during < lockWorkstation, "快捷键执行过程中用户回来了，也要取消锁屏");
+            int backDuringAppLock = tick.IndexOf("if (userInputDuringShortcuts)", StringComparison.Ordinal);
+            Assert(backDuringAppLock >= 0 && backDuringAppLock < appLock, "只锁微信/QQ 时，执行过程中用户回来了就不进入“等你回来”");
             Pass();
         }
 
@@ -315,12 +317,17 @@ namespace BluetoothAutoLock.Tests
             Pass();
         }
 
-        private static void InjectionWatchSeparatesUserInputFromOwnKeys()
+        private static void RealInputDetectorIgnoresInjectedInput()
         {
-            Assert(!UserReturnPolicy.IsInputAfterInjection(1100, 1000), "程序自己按键后 100ms 内的输入时间不算用户回来");
-            Assert(UserReturnPolicy.IsInputAfterInjection(1300, 1000), "程序按键 300ms 之后出现的输入应算用户回来");
-            Assert(!UserReturnPolicy.IsInputAfterInjection(950, 1000), "早于程序按键的输入不算用户回来");
-            Assert(UserReturnPolicy.IsInputAfterInjection(0x00000100u, 0xFFFFFF00u), "开机计时回绕时也应正确判断");
+            string source = ReadSource("LockShortcuts.cs");
+            string keyboard = ExtractMethodBody(source, "private IntPtr KeyboardCallback(int nCode, IntPtr wParam, IntPtr lParam)");
+            string mouse = ExtractMethodBody(source, "private IntPtr MouseCallback(int nCode, IntPtr wParam, IntPtr lParam)");
+            Assert(keyboard.Contains("(data.flags & NativeMethods.LLKHF_INJECTED) == 0"), "只把没有“模拟”标记的键盘输入算作用户回来");
+            Assert(mouse.Contains("(data.flags & NativeMethods.LLMHF_INJECTED) == 0"), "只把没有“模拟”标记的鼠标输入算作用户回来");
+            Assert(keyboard.Contains("return NativeMethods.CallNextHookEx(") && !keyboard.Contains("new IntPtr(1)"), "检测钩子只看不拦，键盘输入必须照常传下去");
+            Assert(mouse.Contains("return NativeMethods.CallNextHookEx(") && !mouse.Contains("new IntPtr(1)"), "检测钩子只看不拦，鼠标输入必须照常传下去");
+            string run = ExtractMethodBody(source, "public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn, out bool userInputSeen)");
+            Assert(run.Contains("new RealInputDetector()"), "执行快捷键期间要用真人输入检测器");
             Pass();
         }
 

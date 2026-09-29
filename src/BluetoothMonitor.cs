@@ -492,6 +492,13 @@ namespace BluetoothAutoLock
             }
             if (!lockScreen)
             {
+                if (userInputDuringShortcuts)
+                {
+                    _log.Info("Keyboard/mouse input occurred while running the lock shortcuts; the user is back, keep monitoring.");
+                    ResetMissingState();
+                    SetStatus("你回来了 — 继续监控", "键鼠空闲30秒后检查蓝牙");
+                    return;
+                }
                 if (appLocks == 0)
                 {
                     _log.Warn("No lock shortcut was sent (target not running or sending failed); keep monitoring and retry after the next absence window.");
