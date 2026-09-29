@@ -35,11 +35,14 @@ namespace BluetoothAutoLock
         private Button _lockShortcutClearBtn;
         private Button _lockShortcutTestBtn;
         private Label _lockShortcutStatusLabel;
-        private TextBox _weChatShowKeyText;
+        private TextBox _lockShortcutPreCaptureText;
+        private NumericUpDown _lockShortcutPreDelayNum;
         private CheckBox _lockScreenChk;
         private CheckBox _lockAppsChk;
         private readonly List<LockShortcutMapping> _lockShortcutMappings = new List<LockShortcutMapping>();
         private string _capturedLockShortcut = "";
+        private string _capturedPreShortcut = "";
+        private const string PreCapturePlaceholder = "可不填；点击后按键";
         private bool _lockShortcutWinDown;
 
         // === 实时状态 / 日志 控件 ===
@@ -168,7 +171,7 @@ namespace BluetoothAutoLock
             bluetoothTab.Controls.Add(new Label { Text = "手机离开后：", Left = labelLeft, Top = y + 4, Width = labelWidth });
             _lockScreenChk = new CheckBox { Text = "锁定 Windows 屏幕", Left = ctrlLeft, Top = y + 2, AutoSize = true };
             bluetoothTab.Controls.Add(_lockScreenChk);
-            _lockAppsChk = new CheckBox { Text = "锁定微信/QQ（见“锁屏快捷键”页）", Left = ctrlLeft + 160, Top = y + 2, AutoSize = true };
+            _lockAppsChk = new CheckBox { Text = "执行锁屏快捷键（如锁定微信/QQ）", Left = ctrlLeft + 160, Top = y + 2, AutoSize = true };
             bluetoothTab.Controls.Add(_lockAppsChk);
             y += rowH;
 
@@ -320,19 +323,19 @@ namespace BluetoothAutoLock
                 Left = left,
                 Top = y,
                 Width = width,
-                Height = 38,
+                Height = 54,
                 Font = normalFont,
                 ForeColor = Color.DimGray,
-                Text = "手机离开后按列表顺序执行：备注写“微信”或“QQ”的，会先把微信/QQ 叫到最前面，再按下这个锁定键。点击按键框后直接按组合键，再填写备注并新增。"
+                Text = "手机离开后按列表顺序按下这些全局快捷键：有前置快捷键的先按它（例如 Ctrl+Alt+W 把微信叫出来），等一会儿再按快捷键（例如 Ctrl+L 锁定微信）。点击按键框后直接按组合键，再填写备注并新增。"
             });
-            y += 48;
+            y += 62;
 
             _lockShortcutList = new ListView
             {
                 Left = left,
                 Top = y,
                 Width = width,
-                Height = 250,
+                Height = 200,
                 View = View.Details,
                 FullRowSelect = true,
                 GridLines = true,
@@ -340,13 +343,38 @@ namespace BluetoothAutoLock
                 MultiSelect = true,
                 Font = normalFont
             };
-            _lockShortcutList.Columns.Add("快捷键", 170);
-            _lockShortcutList.Columns.Add("备注作用", width - 190);
+            _lockShortcutList.Columns.Add("前置快捷键 → 快捷键", 230);
+            _lockShortcutList.Columns.Add("备注作用", width - 250);
             _lockShortcutList.SelectedIndexChanged += (s, e) => UpdateLockShortcutButtons();
             tab.Controls.Add(_lockShortcutList);
             y += _lockShortcutList.Height + 18;
 
-            tab.Controls.Add(new Label { Text = "按键映射：", Left = left, Top = y + 4, Width = 86, Font = normalFont });
+            tab.Controls.Add(new Label { Text = "前置快捷键：", Left = left, Top = y + 4, Width = 86, Font = normalFont });
+            _lockShortcutPreCaptureText = new TextBox
+            {
+                Left = left + 90,
+                Top = y,
+                Width = 180,
+                ReadOnly = true,
+                Font = normalFont,
+                Text = PreCapturePlaceholder
+            };
+            _lockShortcutPreCaptureText.KeyDown += CaptureLockShortcutKeyDown;
+            _lockShortcutPreCaptureText.KeyUp += CaptureLockShortcutKeyUp;
+            _lockShortcutPreCaptureText.Leave += (s, e) => _lockShortcutWinDown = false;
+            tab.Controls.Add(_lockShortcutPreCaptureText);
+            tab.Controls.Add(new Label
+            {
+                Text = "（先按它，比如把微信叫出来；在框里按 Backspace 清空）",
+                Left = left + 288,
+                Top = y + 4,
+                Width = width - 288,
+                ForeColor = Color.Gray,
+                Font = normalFont
+            });
+            y += 36;
+
+            tab.Controls.Add(new Label { Text = "快捷键：", Left = left, Top = y + 4, Width = 86, Font = normalFont });
             _lockShortcutCaptureText = new TextBox
             {
                 Left = left + 90,
@@ -412,12 +440,21 @@ namespace BluetoothAutoLock
             });
             y += 34;
 
-            tab.Controls.Add(new Label { Text = "微信唤出键：", Left = left, Top = y + 4, Width = 90, Font = normalFont });
-            _weChatShowKeyText = new TextBox { Left = left + 90, Top = y, Width = 100, Font = normalFont };
-            tab.Controls.Add(_weChatShowKeyText);
+            tab.Controls.Add(new Label { Text = "前置键后等待：", Left = left, Top = y + 4, Width = 90, Font = normalFont });
+            _lockShortcutPreDelayNum = new NumericUpDown
+            {
+                Left = left + 90,
+                Top = y,
+                Width = 100,
+                Minimum = 0,
+                Maximum = 10000,
+                Increment = 100,
+                Font = normalFont
+            };
+            tab.Controls.Add(_lockShortcutPreDelayNum);
             tab.Controls.Add(new Label
             {
-                Text = "微信缩在托盘里时，先按这个键把微信叫出来（默认 Ctrl+Alt+W；留空=不用）",
+                Text = "毫秒（默认1000；按完前置快捷键，等这么久再按快捷键）",
                 Left = left + 200,
                 Top = y + 4,
                 Width = width - 200,
@@ -434,7 +471,7 @@ namespace BluetoothAutoLock
                 Height = 36,
                 ForeColor = Color.DimGray,
                 Font = normalFont,
-                Text = "测试触发会把微信/QQ 叫到最前面并按下锁定键，锁上后需要用手机解锁。"
+                Text = "测试触发会按顺序按下这些快捷键；微信/QQ 锁上后需要用手机解锁。"
             };
             tab.Controls.Add(_lockShortcutStatusLabel);
 
@@ -443,6 +480,7 @@ namespace BluetoothAutoLock
 
         private void CaptureLockShortcutKeyDown(object sender, KeyEventArgs e)
         {
+            bool isPre = sender != null && sender == _lockShortcutPreCaptureText;
             bool winDown = _lockShortcutWinDown || e.KeyCode == Keys.LWin || e.KeyCode == Keys.RWin;
             if (e.KeyCode == Keys.LWin || e.KeyCode == Keys.RWin)
             {
@@ -452,11 +490,28 @@ namespace BluetoothAutoLock
                 return;
             }
 
+            if (isPre && e.Modifiers == Keys.None && (e.KeyCode == Keys.Back || e.KeyCode == Keys.Delete))
+            {
+                _capturedPreShortcut = "";
+                _lockShortcutPreCaptureText.Text = PreCapturePlaceholder;
+                e.SuppressKeyPress = true;
+                e.Handled = true;
+                return;
+            }
+
             string shortcut;
             if (LockShortcutMapping.TryFromKeyEvent(e.KeyCode, e.Modifiers, winDown, out shortcut))
             {
-                _capturedLockShortcut = shortcut;
-                _lockShortcutCaptureText.Text = shortcut;
+                if (isPre)
+                {
+                    _capturedPreShortcut = shortcut;
+                    _lockShortcutPreCaptureText.Text = shortcut;
+                }
+                else
+                {
+                    _capturedLockShortcut = shortcut;
+                    _lockShortcutCaptureText.Text = shortcut;
+                }
             }
 
             e.SuppressKeyPress = true;
@@ -476,14 +531,16 @@ namespace BluetoothAutoLock
             string shortcut = _capturedLockShortcut;
             if (string.IsNullOrWhiteSpace(shortcut))
             {
-                MessageBox.Show("请先点击按键映射框，并按下要触发的快捷键。",
+                MessageBox.Show("请先点击“快捷键”框，并按下要触发的快捷键。",
                     "蓝牙自动锁屏", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
+            string preShortcut = _capturedPreShortcut ?? "";
             for (int i = 0; i < _lockShortcutMappings.Count; i++)
             {
-                if (string.Equals(_lockShortcutMappings[i].Shortcut, shortcut, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(_lockShortcutMappings[i].Shortcut, shortcut, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(_lockShortcutMappings[i].PreShortcut ?? "", preShortcut, StringComparison.OrdinalIgnoreCase))
                 {
                     MessageBox.Show("这个快捷键已经存在，请不要重复新增。",
                         "蓝牙自动锁屏", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -491,9 +548,11 @@ namespace BluetoothAutoLock
                 }
             }
 
-            _lockShortcutMappings.Add(new LockShortcutMapping(shortcut, _lockShortcutNoteText.Text));
+            _lockShortcutMappings.Add(new LockShortcutMapping(shortcut, _lockShortcutNoteText.Text, preShortcut));
             _capturedLockShortcut = "";
+            _capturedPreShortcut = "";
             _lockShortcutCaptureText.Text = "点击后按快捷键";
+            _lockShortcutPreCaptureText.Text = PreCapturePlaceholder;
             _lockShortcutNoteText.Clear();
             RefreshLockShortcutList();
         }
@@ -538,15 +597,9 @@ namespace BluetoothAutoLock
                 return;
             }
 
-            string weChatShowKey;
-            if (!TryReadWeChatShowKey(out weChatShowKey))
-            {
-                SetLockShortcutStatus("微信唤出键格式不对，例如 Ctrl+Alt+W；不用可以留空。", Color.DarkOrange);
-                return;
-            }
-
+            int preDelay = _lockShortcutPreDelayNum == null ? 1000 : (int)_lockShortcutPreDelayNum.Value;
             _lockShortcutTestBtn.Enabled = false;
-            SetLockShortcutStatus("正在测试：把微信/QQ 叫到最前面并按锁定键……", Color.FromArgb(0, 96, 160));
+            SetLockShortcutStatus("正在测试：按顺序按下前置快捷键和快捷键……", Color.FromArgb(0, 96, 160));
             Logger log = _log;
             if (log != null) log.Info("Lock shortcut test requested from settings; testing " + mappings.Count + " shortcut(s).");
             ThreadPool.QueueUserWorkItem(_ =>
@@ -557,7 +610,7 @@ namespace BluetoothAutoLock
                 {
                     sent = LockShortcutRunner.TriggerAll(
                         mappings,
-                        weChatShowKey,
+                        preDelay,
                         message => { if (log != null) log.Info(message); },
                         message =>
                         {
@@ -583,22 +636,14 @@ namespace BluetoothAutoLock
                     if (IsDisposed) return;
                     UpdateLockShortcutButtons();
                     if (warnings.Count > 0)
-                        SetLockShortcutStatus("测试按下了 " + sent + " 个锁定键；有 " + warnings.Count + " 个没按：" + warnings[0], Color.DarkOrange);
+                        SetLockShortcutStatus("测试按下了 " + sent + " 组快捷键；有 " + warnings.Count + " 组失败：" + warnings[0], Color.DarkOrange);
                     else
-                        SetLockShortcutStatus("测试已按下 " + sent + " 个锁定键，请看微信/QQ 是否已锁定。", Color.FromArgb(0, 96, 160));
+                        SetLockShortcutStatus("测试已按下 " + sent + " 组快捷键，请看微信/QQ 是否已锁定。", Color.FromArgb(0, 96, 160));
                 }));
             }
             catch
             {
             }
-        }
-
-        private bool TryReadWeChatShowKey(out string shortcut)
-        {
-            shortcut = "";
-            string text = _weChatShowKeyText == null ? "" : (_weChatShowKeyText.Text ?? "").Trim();
-            if (text.Length == 0) return true;
-            return LockShortcutMapping.TryNormalizeShortcutText(text, out shortcut);
         }
 
         private void SetLockShortcutStatus(string text, Color color)
@@ -619,7 +664,7 @@ namespace BluetoothAutoLock
                 for (int i = 0; i < _lockShortcutMappings.Count; i++)
                 {
                     LockShortcutMapping mapping = _lockShortcutMappings[i];
-                    var item = new ListViewItem(mapping.Shortcut ?? "");
+                    var item = new ListViewItem(mapping.ToDisplayText());
                     item.SubItems.Add(mapping.Note ?? "");
                     _lockShortcutList.Items.Add(item);
                 }
@@ -1158,7 +1203,7 @@ namespace BluetoothAutoLock
             _logPathText.Text = _cfg.LogPath ?? "";
             _lockScreenChk.Checked = _cfg.LockScreenEnabled;
             _lockAppsChk.Checked = _cfg.LockShortcutsEnabled;
-            _weChatShowKeyText.Text = _cfg.WeChatShowWindowShortcut ?? "";
+            _lockShortcutPreDelayNum.Value = Clamp(_cfg.LockShortcutPreDelayMilliseconds, 0, 10000);
             _lockShortcutSettleNum.Value = Clamp(_cfg.LockShortcutSettleMilliseconds, 0, 10000);
 
             _lockShortcutMappings.Clear();
@@ -1167,7 +1212,7 @@ namespace BluetoothAutoLock
                 foreach (LockShortcutMapping mapping in _cfg.LockShortcutMappings)
                 {
                     if (mapping == null) continue;
-                    _lockShortcutMappings.Add(new LockShortcutMapping(mapping.Shortcut, mapping.Note));
+                    _lockShortcutMappings.Add(new LockShortcutMapping(mapping.Shortcut, mapping.Note, mapping.PreShortcut));
                 }
             }
             RefreshLockShortcutList();
@@ -1206,14 +1251,6 @@ namespace BluetoothAutoLock
                 return false;
             }
 
-            string weChatShowKey;
-            if (!TryReadWeChatShowKey(out weChatShowKey))
-            {
-                MessageBox.Show("“微信唤出键”格式不对，例如 Ctrl+Alt+W；不用可以留空。",
-                    "蓝牙自动锁屏", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return false;
-            }
-
             _cfg.DeviceAddress = sel.Address;
             _cfg.DeviceName = sel.DisplayName;
             _cfg.DisconnectDelaySeconds = (int)_delayNum.Value;
@@ -1223,13 +1260,13 @@ namespace BluetoothAutoLock
             _cfg.LogPath = _logPathText.Text.Trim();
             _cfg.LockScreenEnabled = _lockScreenChk.Checked;
             _cfg.LockShortcutsEnabled = _lockAppsChk.Checked;
-            _cfg.WeChatShowWindowShortcut = weChatShowKey;
+            _cfg.LockShortcutPreDelayMilliseconds = (int)_lockShortcutPreDelayNum.Value;
             _cfg.LockShortcutSettleMilliseconds = (int)_lockShortcutSettleNum.Value;
             _cfg.LockShortcutMappings = new List<LockShortcutMapping>();
             foreach (LockShortcutMapping mapping in _lockShortcutMappings)
             {
                 if (mapping == null || string.IsNullOrWhiteSpace(mapping.Shortcut)) continue;
-                _cfg.LockShortcutMappings.Add(new LockShortcutMapping(mapping.Shortcut, mapping.Note));
+                _cfg.LockShortcutMappings.Add(new LockShortcutMapping(mapping.Shortcut, mapping.Note, mapping.PreShortcut));
             }
 
             _cfg.LolOptimizerEnabled = _lolEnableChk.Checked;

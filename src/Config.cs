@@ -21,7 +21,7 @@ namespace BluetoothAutoLock
         public int LockShortcutSettleMilliseconds { get; set; }
         public bool LockScreenEnabled { get; set; }
         public bool LockShortcutsEnabled { get; set; }
-        public string WeChatShowWindowShortcut { get; set; }
+        public int LockShortcutPreDelayMilliseconds { get; set; }
 
         // === LoL 启动/退出 → 游戏性能自动优化（可选） ===
         public bool LolOptimizerEnabled { get; set; }
@@ -69,7 +69,7 @@ namespace BluetoothAutoLock
                 LockShortcutSettleMilliseconds = 3000,
                 LockScreenEnabled = true,
                 LockShortcutsEnabled = true,
-                WeChatShowWindowShortcut = "Ctrl+Alt+W",
+                LockShortcutPreDelayMilliseconds = 1000,
 
                 LolOptimizerEnabled = false,
                 LolProcessName = "League of Legends",
@@ -160,6 +160,8 @@ namespace BluetoothAutoLock
             if (cfg.MaxLogSizeMB > 1024) cfg.MaxLogSizeMB = 1024;
             if (cfg.LockShortcutSettleMilliseconds < 0) cfg.LockShortcutSettleMilliseconds = 0;
             if (cfg.LockShortcutSettleMilliseconds > 10000) cfg.LockShortcutSettleMilliseconds = 10000;
+            if (cfg.LockShortcutPreDelayMilliseconds < 0) cfg.LockShortcutPreDelayMilliseconds = 0;
+            if (cfg.LockShortcutPreDelayMilliseconds > 10000) cfg.LockShortcutPreDelayMilliseconds = 10000;
 
             if (cfg.LolOptimizerPollSeconds < 1) cfg.LolOptimizerPollSeconds = 1;
             if (cfg.LolOptimizerPollSeconds > 60) cfg.LolOptimizerPollSeconds = 60;
@@ -235,11 +237,9 @@ namespace BluetoothAutoLock
                     break;
                 case "LockScreenEnabled": cfg.LockScreenEnabled = ParseBoolValue(value); break;
                 case "LockShortcutsEnabled": cfg.LockShortcutsEnabled = ParseBoolValue(value); break;
-                case "WeChatShowWindowShortcut":
-                    string showShortcut;
-                    if (string.IsNullOrWhiteSpace(value)) cfg.WeChatShowWindowShortcut = "";
-                    else if (LockShortcutMapping.TryNormalizeShortcutText(value, out showShortcut)) cfg.WeChatShowWindowShortcut = showShortcut;
-                    else if (warn != null) warn("Warn", path + ":" + lineNo + " invalid shortcut for WeChatShowWindowShortcut: " + value);
+                case "LockShortcutPreDelayMilliseconds":
+                    if (int.TryParse(value, out intVal)) cfg.LockShortcutPreDelayMilliseconds = intVal;
+                    else if (warn != null) warn("Warn", path + ":" + lineNo + " invalid integer for LockShortcutPreDelayMilliseconds: " + value);
                     break;
                 case "LolOptimizerEnabled": cfg.LolOptimizerEnabled = ParseBoolValue(value); break;
                 case "LolProcessName": cfg.LolProcessName = value; break;
@@ -295,6 +295,7 @@ namespace BluetoothAutoLock
                 case "LolAntiCheatAffinityMask":
                 case "WslCpuThreads":
                 case "WslCpuPriority":
+                case "WeChatShowWindowShortcut":
                     break;
                 case "LolOptimizerPollSeconds":
                     if (int.TryParse(value, out intVal)) cfg.LolOptimizerPollSeconds = intVal;
@@ -309,7 +310,7 @@ namespace BluetoothAutoLock
         public string Describe()
         {
             return string.Format(
-                "Config(loadedFrom={0}, DeviceName='{1}', DeviceAddress='{2}', IdleBeforeBluetoothCheck=30s, BluetoothAbsenceBeforeLock={3}s, FinalRecheckAttempts={4}, Polling=random {5}-{13}s, LogPath={6}, LogLevel={7}, MaxLogSizeMB={8}, LolOpt={9}, LolProc='{10}', VDId='{11}', LolPoll={12}s, WslCacheReclaim={14}, WslDistro='{15}', RemoteClose={16}, RemoteQuiet={17}m, GameMonitor={18}, GameMonitorInterval={19}m, GameAi={20}, GameAiModel='{21}', GameAiKey={22}, ToolZombieCount={23}, ToolZombieMemMB={24}, LolRenderThreshold={25}, LockShortcuts={26}, LockShortcutSettleMs={27}, LockScreen={28}, LockWeChatQQ={29}, WeChatShowKey='{30}')",
+                "Config(loadedFrom={0}, DeviceName='{1}', DeviceAddress='{2}', IdleBeforeBluetoothCheck=30s, BluetoothAbsenceBeforeLock={3}s, FinalRecheckAttempts={4}, Polling=random {5}-{13}s, LogPath={6}, LogLevel={7}, MaxLogSizeMB={8}, LolOpt={9}, LolProc='{10}', VDId='{11}', LolPoll={12}s, WslCacheReclaim={14}, WslDistro='{15}', RemoteClose={16}, RemoteQuiet={17}m, GameMonitor={18}, GameMonitorInterval={19}m, GameAi={20}, GameAiModel='{21}', GameAiKey={22}, ToolZombieCount={23}, ToolZombieMemMB={24}, LolRenderThreshold={25}, LockShortcuts={26}, LockShortcutSettleMs={27}, LockScreen={28}, LockShortcutsEnabled={29}, LockShortcutPreDelayMs={30})",
                 LoadedFrom, DeviceName, DeviceAddress, DisconnectDelaySeconds, DisconnectConfirmSeconds, PollingIntervalSeconds, LogPath, LogLevel, MaxLogSizeMB,
                 LolOptimizerEnabled, LolProcessName, VirtualDisplayDeviceId, LolOptimizerPollSeconds,
                 Math.Max(1, Math.Min(60, PollingIntervalSeconds + 7)),
@@ -319,7 +320,7 @@ namespace BluetoothAutoLock
                 GameOptimizerToolZombieCountThreshold, GameOptimizerToolZombieMemoryMB, GameOptimizerLolRenderCountThreshold,
                 LockShortcutMappings == null ? 0 : LockShortcutMappings.Count,
                 LockShortcutSettleMilliseconds,
-                LockScreenEnabled, LockShortcutsEnabled, WeChatShowWindowShortcut);
+                LockScreenEnabled, LockShortcutsEnabled, LockShortcutPreDelayMilliseconds);
         }
 
         public static string Save(Config cfg)
@@ -341,7 +342,7 @@ namespace BluetoothAutoLock
                 { "LockShortcutSettleMilliseconds", cfg.LockShortcutSettleMilliseconds.ToString(CultureInfo.InvariantCulture) },
                 { "LockScreenEnabled", cfg.LockScreenEnabled ? "true" : "false" },
                 { "LockShortcutsEnabled", cfg.LockShortcutsEnabled ? "true" : "false" },
-                { "WeChatShowWindowShortcut", cfg.WeChatShowWindowShortcut ?? "" },
+                { "LockShortcutPreDelayMilliseconds", cfg.LockShortcutPreDelayMilliseconds.ToString(CultureInfo.InvariantCulture) },
                 { "LolOptimizerEnabled", cfg.LolOptimizerEnabled ? "true" : "false" },
                 { "LolProcessName", cfg.LolProcessName ?? "" },
                 { "VirtualDisplayDeviceId", cfg.VirtualDisplayDeviceId ?? "" },

@@ -11,7 +11,7 @@ namespace BluetoothAutoLock
         private static NativeMethods.ConsoleCtrlDelegate _ctrlHandler;
         private static Mutex _singleInstanceMutex;
 
-        public const string Version = "1.1.35";
+        public const string Version = "1.1.36";
         private const string SingleInstanceMutexName = @"Local\BluetoothAutoLock";
 
         [STAThread]
@@ -296,7 +296,7 @@ namespace BluetoothAutoLock
             log.Info("Manual lock shortcut test requested; triggering " + cfg.LockShortcutMappings.Count + " shortcut(s), no workstation lock.");
             int sent = LockShortcutRunner.TriggerAll(
                 cfg.LockShortcutMappings,
-                cfg.WeChatShowWindowShortcut,
+                cfg.LockShortcutPreDelayMilliseconds,
                 message => log.Info(message),
                 message => log.Warn(message));
 

@@ -11,8 +11,9 @@ if not exist "%BIN%" mkdir "%BIN%"
 
 "%CSC%" /nologo /target:exe /platform:x64 /warnaserror+ /utf8output ^
     /reference:"%REFDIR%\System.dll" ^
+    /reference:"%REFDIR%\System.Windows.Forms.dll" ^
     /out:"%BIN%\BluetoothMonitorPolicyTests.exe" ^
-    "%SRC%\BluetoothMonitorPolicy.cs" "%TESTS%\BluetoothMonitorPolicyTests.cs"
+    "%SRC%\BluetoothMonitorPolicy.cs" "%SRC%\NativeMethods.cs" "%SRC%\LockShortcuts.cs" "%TESTS%\BluetoothMonitorPolicyTests.cs"
 if errorlevel 1 (
     echo [monitor-policy-test] BUILD FAILED
     exit /b 1
