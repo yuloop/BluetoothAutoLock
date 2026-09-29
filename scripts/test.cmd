@@ -22,7 +22,7 @@ if exist "%SRC%\LockShortcuts.cs" set LOCKSRC="%SRC%\LockShortcuts.cs"
     /reference:"%REFDIR%\System.dll" ^
     /reference:"%REFDIR%\System.Windows.Forms.dll" ^
     /out:"%BIN%\LockShortcutTests.exe" ^
-    "%SRC%\NativeMethods.cs" "%SRC%\Config.cs" %LOCKSRC% "%TESTS%\LockShortcutTests.cs"
+    "%SRC%\NativeMethods.cs" "%SRC%\Config.cs" "%SRC%\BluetoothMonitorPolicy.cs" %LOCKSRC% "%TESTS%\LockShortcutTests.cs"
 if errorlevel 1 (
     echo [test] BUILD FAILED
     exit /b 1

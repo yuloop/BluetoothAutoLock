@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace BluetoothAutoLock.Tests
@@ -25,7 +26,8 @@ namespace BluetoothAutoLock.Tests
                 UserReturnIgnoresInjectedInput();
                 LeaveActionsRespectToggles();
                 ParsesPreShortcutMapping();
-                ShortcutRunnerSendsPreShortcutFirstWithoutWindowTricks();
+                ChoosesMainWindowFromRealWeChatAndQqLayout();
+                ShortcutRunnerChecksFrontBeforePreShortcut();
                 Console.WriteLine("通过：" + _passed + " 项");
                 return 0;
             }
@@ -219,18 +221,78 @@ namespace BluetoothAutoLock.Tests
 
             Assert(!LockShortcutMapping.TryParseConfigValue("Ctrl+Alt+W>|锁定微信", out mapping), "缺少快捷键时应拒绝");
             Assert(!LockShortcutMapping.TryParseConfigValue("Ctrl+Alt>Ctrl+L|锁定微信", out mapping), "前置快捷键只有修饰键时应拒绝");
+
+            Assert(LockShortcutMapping.TryParseConfigValue("Ctrl+Alt+W>Ctrl+L|锁定微信|target=Weixin.exe", out mapping), "应能解析带目标程序的映射");
+            Assert(mapping.TargetProcess == "Weixin" && mapping.Note == "锁定微信", "目标程序应去掉 .exe，备注不受影响");
+            Assert(mapping.ToConfigValue() == "Ctrl+Alt+W>Ctrl+L|锁定微信|target=Weixin", "保存格式应为 前置快捷键>快捷键|备注|target=程序名");
+            Assert(LockShortcutMapping.TryParseConfigValue("Alt+Shift+P||target=QQ", out mapping), "备注为空时也应能解析目标程序");
+            Assert(mapping.TargetProcess == "QQ" && mapping.Note == "", "备注为空、目标程序为 QQ");
+            Assert(mapping.ToConfigValue() == "Alt+Shift+P||target=QQ", "备注为空时保存格式应保持可解析");
             Pass();
         }
 
-        private static void ShortcutRunnerSendsPreShortcutFirstWithoutWindowTricks()
+        private static void ChoosesMainWindowFromRealWeChatAndQqLayout()
+        {
+            var weChat = new List<TargetWindowCandidate>
+            {
+                Window(0x5A1BFE, false, false, false, 0x06000000, 0x000800A8, "Weixin", "Qt51514QWindowToolSaveBits", 246, 70),
+                Window(0x90940, false, false, false, unchecked((int)0x86C70000), 0x00000100, "微信", "Qt51514QWindowIcon", 1135, 974),
+                Window(0x851384, false, false, false, unchecked((int)0x86CF0000), 0x00000100, "Weixin", "Qt51514QWindowIcon", 176, 199),
+                Window(0x509C4, false, false, false, 0x04C00000, 0x00000100, "WxTrayIconMessageWindow", "Qt51514WxTrayIconMessageWindowClass", 1920, 1023),
+                Window(0x5017B6, false, false, true, unchecked((int)0x8C000000), 0, "Default IME", "IME", 0, 0)
+            };
+            TargetWindowCandidate weChatMain = TargetWindowPolicy.ChooseMainWindow(weChat);
+            Assert(weChatMain != null && weChatMain.Handle == new IntPtr(0x90940), "微信缩在托盘时应选中隐藏的“微信”主窗口，而不是托盘消息窗口或小弹窗");
+
+            var qq = new List<TargetWindowCandidate>
+            {
+                Window(0x30198, true, false, false, 0x14C70000, 0x00200100, "QQ", "Chrome_WidgetWin_1", 1264, 996),
+                Window(0x1961B6A, false, false, false, 0x04C70000, 0x00200100, "QQ", "Chrome_WidgetWin_1", 800, 600),
+                Window(0x11C1916, false, false, false, 0x04020000, 0x00200000, "QQ", "Chrome_WidgetWin_1", 32, 39),
+                Window(0x81CE2, false, false, false, 0x04020000, 0x00200000, "QQ", "Chrome_WidgetWin_1", 350, 510),
+                Window(0x511DD8, false, false, false, unchecked((int)0x84000000), 0, "GDI+ Window (QQ.exe)", "GDI+ Hook Window Class", 1, 1)
+            };
+            TargetWindowCandidate qqMain = TargetWindowPolicy.ChooseMainWindow(qq);
+            Assert(qqMain != null && qqMain.Handle == new IntPtr(0x30198), "QQ 主窗口开着时应优先选中可见的主窗口");
+
+            qq[0] = Window(0x30198, false, false, false, 0x04C70000, 0x00200100, "QQ", "Chrome_WidgetWin_1", 1264, 996);
+            qqMain = TargetWindowPolicy.ChooseMainWindow(qq);
+            Assert(qqMain != null && qqMain.Handle == new IntPtr(0x30198), "QQ 缩到托盘时应选中最大的隐藏主窗口");
+
+            qq[0] = Window(0x30198, true, true, false, 0x34C70000, 0x00200100, "QQ", "Chrome_WidgetWin_1", 160, 28);
+            qqMain = TargetWindowPolicy.ChooseMainWindow(qq);
+            Assert(qqMain != null && qqMain.Handle == new IntPtr(0x30198), "QQ 最小化时应选中最小化的主窗口并还原");
+            Pass();
+        }
+
+        private static void ShortcutRunnerChecksFrontBeforePreShortcut()
         {
             string source = ReadSource("LockShortcuts.cs");
             string body = ExtractMethodBody(source, "public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn)");
+            int front = body.IndexOf("LockShortcutTarget.IsFrontMost(pids)", StringComparison.Ordinal);
             int pre = body.IndexOf("SendShortcut(mapping.PreShortcut)", StringComparison.Ordinal);
+            int bring = body.IndexOf("LockShortcutTarget.BringToFront(pids)", StringComparison.Ordinal);
             int main = body.IndexOf("SendShortcut(mapping.Shortcut)", StringComparison.Ordinal);
-            Assert(pre >= 0 && main >= 0 && pre < main, "必须先按前置快捷键，再按快捷键");
-            Assert(!source.Contains("SetForegroundWindow") && !source.Contains("ShowWindow("), "快捷键都按全局发送，不再切换或显示目标窗口");
+            Assert(front >= 0 && pre > front && bring > pre && main > bring,
+                "应先判断目标是否已在最前面，再按前置快捷键，再把目标切到最前面，最后按快捷键");
             Pass();
+        }
+
+        private static TargetWindowCandidate Window(long handle, bool visible, bool iconic, bool hasOwner, int style, int exStyle, string title, string className, int width, int height)
+        {
+            return new TargetWindowCandidate
+            {
+                Handle = new IntPtr(handle),
+                Visible = visible,
+                Iconic = iconic,
+                HasOwner = hasOwner,
+                ToolWindow = (exStyle & 0x00000080) != 0,
+                Minimizable = (style & 0x00020000) != 0,
+                Title = title,
+                ClassName = className,
+                Width = width,
+                Height = height
+            };
         }
 
         private static string ReadSource(string fileName)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -12,6 +13,7 @@ namespace BluetoothAutoLock
         public string Shortcut { get; set; }
         public string PreShortcut { get; set; }
         public string Note { get; set; }
+        public string TargetProcess { get; set; }
 
         public LockShortcutMapping()
             : this("", "")
@@ -24,16 +26,24 @@ namespace BluetoothAutoLock
         }
 
         public LockShortcutMapping(string shortcut, string note, string preShortcut)
+            : this(shortcut, note, preShortcut, "")
+        {
+        }
+
+        public LockShortcutMapping(string shortcut, string note, string preShortcut, string targetProcess)
         {
             Shortcut = shortcut ?? "";
             PreShortcut = preShortcut ?? "";
             Note = CleanNote(note);
+            TargetProcess = CleanTargetProcess(targetProcess);
         }
 
         public string ToConfigValue()
         {
             string keys = string.IsNullOrEmpty(PreShortcut) ? (Shortcut ?? "") : (PreShortcut + ">" + (Shortcut ?? ""));
             string note = CleanNote(Note);
+            string target = CleanTargetProcess(TargetProcess);
+            if (target.Length > 0) return keys + "|" + note + "|" + TargetPrefix + target;
             if (string.IsNullOrEmpty(note)) return keys;
             return keys + "|" + note;
         }
@@ -51,11 +61,23 @@ namespace BluetoothAutoLock
 
             string shortcutText = value;
             string note = "";
+            string target = "";
             int sep = value.IndexOf('|');
             if (sep >= 0)
             {
                 shortcutText = value.Substring(0, sep);
                 note = value.Substring(sep + 1);
+                int targetSep = note.LastIndexOf("|" + TargetPrefix, StringComparison.OrdinalIgnoreCase);
+                if (targetSep >= 0)
+                {
+                    target = note.Substring(targetSep + 1 + TargetPrefix.Length);
+                    note = note.Substring(0, targetSep);
+                }
+                else if (note.TrimStart().StartsWith(TargetPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    target = note.TrimStart().Substring(TargetPrefix.Length);
+                    note = "";
+                }
             }
 
             string preShortcut = "";
@@ -69,8 +91,18 @@ namespace BluetoothAutoLock
 
             string shortcut;
             if (!TryNormalizeShortcutText(shortcutText, out shortcut)) return false;
-            mapping = new LockShortcutMapping(shortcut, note, preShortcut);
+            mapping = new LockShortcutMapping(shortcut, note, preShortcut, target);
             return true;
+        }
+
+        private const string TargetPrefix = "target=";
+
+        public static string CleanTargetProcess(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return "";
+            string clean = name.Replace("|", "").Replace(">", "").Trim();
+            if (clean.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) clean = clean.Substring(0, clean.Length - 4).Trim();
+            return clean;
         }
 
         public static bool TryNormalizeShortcutText(string text, out string shortcut)
@@ -283,19 +315,39 @@ namespace BluetoothAutoLock
                 string note = string.IsNullOrWhiteSpace(mapping.Note) ? "" : (" | 备注：" + mapping.Note);
                 try
                 {
+                    string target = mapping.TargetProcess ?? "";
+                    HashSet<uint> pids = target.Length == 0 ? null : LockShortcutTarget.FindProcessIds(target);
+                    if (pids != null && pids.Count == 0)
+                    {
+                        if (warn != null) warn("Lock shortcut skipped: " + mapping.ToDisplayText() + note + " | target=" + target + " is not running");
+                        continue;
+                    }
+
+                    bool alreadyFront = pids != null && LockShortcutTarget.IsFrontMost(pids);
                     string preText = "";
                     if (!string.IsNullOrWhiteSpace(mapping.PreShortcut))
                     {
-                        SendShortcut(mapping.PreShortcut);
-                        preText = " | pre=" + mapping.PreShortcut + " then wait " + preDelay + "ms";
-                        if (preDelay > 0) Thread.Sleep(preDelay);
+                        if (alreadyFront)
+                        {
+                            preText = " | pre=" + mapping.PreShortcut + " skipped(target already front-most)";
+                        }
+                        else
+                        {
+                            SendShortcut(mapping.PreShortcut);
+                            preText = " | pre=" + mapping.PreShortcut + " then wait " + preDelay + "ms";
+                            if (preDelay > 0) Thread.Sleep(preDelay);
+                        }
                     }
+
+                    string targetText = "";
+                    if (pids != null)
+                        targetText = " | target=" + target + (alreadyFront ? " | front=already" : LockShortcutTarget.BringToFront(pids));
 
                     ShortcutSendResult result = SendShortcut(mapping.Shortcut);
                     sent++;
                     if (info != null)
                     {
-                        info("Lock shortcut triggered: " + mapping.Shortcut + note + preText +
+                        info("Lock shortcut triggered: " + mapping.Shortcut + note + preText + targetText +
                             " | foreground=" + DescribeForegroundProcess() +
                             " | method=" + result.Method +
                             " | InputEvents=" + result.SentInputs + "/" + result.RequestedInputs +
@@ -327,6 +379,12 @@ namespace BluetoothAutoLock
             {
                 return "unknown";
             }
+        }
+
+        internal static void SendKey(ushort virtualKey, bool keyUp)
+        {
+            NativeMethods.INPUT[] arr = { NativeMethods.CreateKeyboardInput(virtualKey, keyUp) };
+            NativeMethods.SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(NativeMethods.INPUT)));
         }
 
         private static ShortcutSendResult SendShortcut(string shortcut)
@@ -375,6 +433,171 @@ namespace BluetoothAutoLock
                 LastWin32Error = lastWin32Error;
                 Method = method;
             }
+        }
+    }
+
+    internal static class LockShortcutTarget
+    {
+        private const int ShowWaitMilliseconds = 2000;
+
+        public static HashSet<uint> FindProcessIds(string processName)
+        {
+            var pids = new HashSet<uint>();
+            if (string.IsNullOrWhiteSpace(processName)) return pids;
+            foreach (Process process in Process.GetProcessesByName(processName))
+            {
+                using (process)
+                    pids.Add((uint)process.Id);
+            }
+            return pids;
+        }
+
+        public static bool IsFrontMost(HashSet<uint> pids)
+        {
+            IntPtr foreground = NativeMethods.GetForegroundWindow();
+            if (foreground == IntPtr.Zero) return false;
+            if (!NativeMethods.IsWindowVisible(foreground) || NativeMethods.IsIconic(foreground)) return false;
+            uint pid;
+            NativeMethods.GetWindowThreadProcessId(foreground, out pid);
+            return pids.Contains(pid);
+        }
+
+        public static string BringToFront(HashSet<uint> pids)
+        {
+            TargetWindowCandidate window = FindMainWindow(pids);
+            if (window == null) return " | front=failed(no window), sent globally";
+
+            string action = "";
+            if (!window.Visible)
+            {
+                NativeMethods.ShowWindow(window.Handle, NativeMethods.SW_SHOW);
+                action = "shown,";
+                TargetWindowCandidate shown = WaitForVisibleMainWindow(pids, ShowWaitMilliseconds);
+                if (shown != null) window = shown;
+                Thread.Sleep(400);
+            }
+            else if (window.Iconic)
+            {
+                NativeMethods.ShowWindow(window.Handle, NativeMethods.SW_RESTORE);
+                action = "restored,";
+                Thread.Sleep(300);
+            }
+
+            string method;
+            bool front = ForceForeground(window.Handle, pids, out method);
+            if (front) Thread.Sleep(300);
+            return " | front=" + action + (front ? "activated(" + method + ")" : "failed(" + method + "), sent globally") +
+                " | window='" + window.Title + "'/" + window.ClassName;
+        }
+
+        private static bool ForceForeground(IntPtr hwnd, HashSet<uint> pids, out string method)
+        {
+            method = "already";
+            if (IsForegroundTarget(pids)) return true;
+
+            method = "direct";
+            NativeMethods.SetForegroundWindow(hwnd);
+            if (WaitForForeground(pids, 300)) return true;
+
+            method = "attach";
+            NativeMethods.MSG ignoredMessage;
+            NativeMethods.PeekMessage(out ignoredMessage, IntPtr.Zero, 0, 0, NativeMethods.PM_NOREMOVE);
+            IntPtr foreground = NativeMethods.GetForegroundWindow();
+            uint ignoredPid;
+            uint foregroundThread = foreground == IntPtr.Zero ? 0 : NativeMethods.GetWindowThreadProcessId(foreground, out ignoredPid);
+            uint currentThread = NativeMethods.GetCurrentThreadId();
+            bool attached = foregroundThread != 0 && foregroundThread != currentThread &&
+                NativeMethods.AttachThreadInput(currentThread, foregroundThread, true);
+            try
+            {
+                NativeMethods.BringWindowToTop(hwnd);
+                NativeMethods.SetForegroundWindow(hwnd);
+            }
+            finally
+            {
+                if (attached) NativeMethods.AttachThreadInput(currentThread, foregroundThread, false);
+            }
+            if (WaitForForeground(pids, 300)) return true;
+
+            method = "alt";
+            LockShortcutRunner.SendKey(NativeMethods.VK_MENU, false);
+            NativeMethods.SetForegroundWindow(hwnd);
+            LockShortcutRunner.SendKey(NativeMethods.VK_MENU, true);
+            return WaitForForeground(pids, 500);
+        }
+
+        private static bool WaitForForeground(HashSet<uint> pids, int timeoutMs)
+        {
+            Stopwatch watch = Stopwatch.StartNew();
+            do
+            {
+                if (IsForegroundTarget(pids)) return true;
+                Thread.Sleep(50);
+            }
+            while (watch.ElapsedMilliseconds < timeoutMs);
+            return false;
+        }
+
+        private static bool IsForegroundTarget(HashSet<uint> pids)
+        {
+            IntPtr foreground = NativeMethods.GetForegroundWindow();
+            if (foreground == IntPtr.Zero) return false;
+            uint pid;
+            NativeMethods.GetWindowThreadProcessId(foreground, out pid);
+            return pids.Contains(pid);
+        }
+
+        private static TargetWindowCandidate WaitForVisibleMainWindow(HashSet<uint> pids, int timeoutMs)
+        {
+            Stopwatch watch = Stopwatch.StartNew();
+            do
+            {
+                TargetWindowCandidate window = FindMainWindow(pids);
+                if (window != null && window.Visible) return window;
+                Thread.Sleep(100);
+            }
+            while (watch.ElapsedMilliseconds < timeoutMs);
+            return null;
+        }
+
+        private static TargetWindowCandidate FindMainWindow(HashSet<uint> pids)
+        {
+            var candidates = new List<TargetWindowCandidate>();
+            NativeMethods.EnumWindows(delegate (IntPtr window, IntPtr lParam)
+            {
+                uint pid;
+                NativeMethods.GetWindowThreadProcessId(window, out pid);
+                if (pid != 0 && pids.Contains(pid)) candidates.Add(DescribeWindow(window));
+                return true;
+            }, IntPtr.Zero);
+
+            return TargetWindowPolicy.ChooseMainWindow(candidates);
+        }
+
+        private static TargetWindowCandidate DescribeWindow(IntPtr window)
+        {
+            var title = new StringBuilder(256);
+            var className = new StringBuilder(256);
+            NativeMethods.GetWindowText(window, title, title.Capacity);
+            NativeMethods.GetClassName(window, className, className.Capacity);
+            NativeMethods.RECT rect;
+            bool hasRect = NativeMethods.GetWindowRect(window, out rect);
+            int style = NativeMethods.GetWindowLong(window, NativeMethods.GWL_STYLE);
+            int exStyle = NativeMethods.GetWindowLong(window, NativeMethods.GWL_EXSTYLE);
+
+            return new TargetWindowCandidate
+            {
+                Handle = window,
+                Visible = NativeMethods.IsWindowVisible(window),
+                Iconic = NativeMethods.IsIconic(window),
+                HasOwner = NativeMethods.GetWindow(window, NativeMethods.GW_OWNER) != IntPtr.Zero,
+                ToolWindow = (exStyle & NativeMethods.WS_EX_TOOLWINDOW) != 0,
+                Minimizable = (style & NativeMethods.WS_MINIMIZEBOX) != 0,
+                Title = title.ToString(),
+                ClassName = className.ToString(),
+                Width = hasRect ? rect.Right - rect.Left : 0,
+                Height = hasRect ? rect.Bottom - rect.Top : 0
+            };
         }
     }
 }

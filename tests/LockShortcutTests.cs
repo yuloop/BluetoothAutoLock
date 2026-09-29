@@ -301,10 +301,9 @@ namespace BluetoothAutoLock.Tests
             AssertEqual("Ctrl+L", mapping.Shortcut, "快捷键应保留");
             AssertEqual("Ctrl+Alt+W>Ctrl+L|锁定微信", mapping.ToConfigValue(), "保存格式应为 前置快捷键>快捷键|备注");
 
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string sourcePath = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "src", "LockShortcuts.cs"));
-            string source = File.ReadAllText(sourcePath);
-            Assert(!source.Contains("SetForegroundWindow"), "快捷键都按全局发送，不再切换目标窗口");
+            Assert(LockShortcutMapping.TryParseConfigValue("Alt+Shift+P|锁定QQ|target=QQ", out mapping), "应能解析带目标程序的映射");
+            AssertEqual("QQ", mapping.TargetProcess, "目标程序应保留");
+            AssertEqual("Alt+Shift+P|锁定QQ|target=QQ", mapping.ToConfigValue(), "保存格式应为 快捷键|备注|target=程序名");
             Pass();
         }
 
