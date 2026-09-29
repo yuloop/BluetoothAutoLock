@@ -34,7 +34,7 @@ if not exist "%WINMD_REF%" (
     /reference:"%FACADES%\System.Threading.Tasks.dll" ^
     /reference:"%WINMD_REF%" ^
     /out:"%BUILD%\BluetoothAutoLock.exe" ^
-    "%SRC%\NativeMethods.cs" "%SRC%\LockShortcuts.cs" "%SRC%\Config.cs" "%SRC%\Logger.cs" "%SRC%\WinRtBluetooth.cs" "%SRC%\BluetoothMonitor.cs" "%SRC%\LolOptimizer.cs" "%SRC%\GameEnvironmentOptimizer.cs" "%SRC%\SettingsForm.cs" "%SRC%\TrayApp.cs" "%SRC%\Program.cs"
+    "%SRC%\NativeMethods.cs" "%SRC%\BluetoothMonitorPolicy.cs" "%SRC%\LockShortcuts.cs" "%SRC%\Config.cs" "%SRC%\Logger.cs" "%SRC%\WinRtBluetooth.cs" "%SRC%\BluetoothMonitor.cs" "%SRC%\LolOptimizer.cs" "%SRC%\GameEnvironmentOptimizer.cs" "%SRC%\SettingsForm.cs" "%SRC%\TrayApp.cs" "%SRC%\Program.cs"
 if errorlevel 1 (
     echo [build] FAILED
     exit /b 1

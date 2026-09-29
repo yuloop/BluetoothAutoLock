@@ -83,7 +83,6 @@ namespace BluetoothAutoLock
         }
 
         private const int IdleSecondsBeforeBluetoothCheck = 30;
-        private const int RequiredHighConfidencePresentConfirmations = 2;
 
         private readonly Config _cfg;
         private readonly Logger _log;
@@ -93,8 +92,8 @@ namespace BluetoothAutoLock
         private bool _wasConnected;
         private DateTime? _missingSince;
         private int _missingProbeCount;
-        private int _presentConfirmCount;
-        private bool _lockSuppressed;
+        private DateTime _appLockFinishedUtc = DateTime.MinValue;
+        private readonly LockLifecycleState _lockLifecycle = new LockLifecycleState();
         private readonly object _statusGate = new object();
         private long _statusSequence;
         private DateTime _statusUpdatedAt = DateTime.Now;
@@ -154,15 +153,7 @@ namespace BluetoothAutoLock
             info.dwSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(info);
 
             IntPtr handle = NativeMethods.BluetoothFindFirstDevice(ref search, ref info);
-            if (handle == IntPtr.Zero)
-            {
-                int err = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
-                if (err != NativeMethods.ERROR_NO_MORE_ITEMS && err != 0)
-                {
-                    System.Diagnostics.Debug.WriteLine("EnumerateDevices: BluetoothFindFirstDevice failed (err=" + err + "); treating as no devices.");
-                }
-                return list;
-            }
+            if (handle == IntPtr.Zero) return list;
 
             try
             {
@@ -232,7 +223,7 @@ namespace BluetoothAutoLock
             }
 
             DeviceSnapshot target = FindTarget(devices);
-            PresenceEvidence evidence = ProbePassivePresence(target, configuredAddress, 4000, false);
+            PresenceEvidence evidence = ProbePassivePresence(target, configuredAddress, 15000, false);
             _log.Info("RunOnce: 被动证据 " + evidence.ToLogText());
 
             ScanHit activeHit = null;
@@ -255,13 +246,10 @@ namespace BluetoothAutoLock
 
         public void ReArmAfterSessionUnlock()
         {
-            if (!_lockSuppressed) return;
+            if (!_lockLifecycle.RequestRearmAfterSessionUnlock()) return;
 
-            _log.Info("Windows session unlocked after Bluetooth lock; clearing suppression and requiring a fresh idle-then-Bluetooth-absence window before another lock.");
-            ResetMissingState();
-            _wasConnected = false;
-            _lockSuppressed = false;
-            SetStatus("已解锁 — 重新计时", "重新开始：键鼠空闲30秒后检查蓝牙，蓝牙缺失满阈值才会再次锁屏");
+            _log.Info("Current Windows session unlocked after Bluetooth lock; scheduling a fresh idle-then-Bluetooth-absence window.");
+            SetStatus("已解锁 — 即将重新计时", "监控线程将重新开始：键鼠空闲30秒后检查蓝牙，蓝牙缺失满阈值才会再次锁屏");
         }
 
         public void RunLoop()
@@ -274,7 +262,8 @@ namespace BluetoothAutoLock
                 " | IdleBeforeBluetoothCheck=" + IdleSecondsBeforeBluetoothCheck + "s" +
                 " | BluetoothAbsenceBeforeLock=" + _cfg.DisconnectDelaySeconds + "s" +
                 " | FinalRecheckAttempts=" + FinalRecheckAttempts() +
-                " | Polling=random " + pollMinSeconds + "-" + pollMaxSeconds + "s");
+                " | Polling=random " + pollMinSeconds + "-" + pollMaxSeconds + "s" +
+                " | LeaveActions: lockScreen=" + _cfg.LockScreenEnabled + ", lockWeChatQQ=" + LockAppsEnabled());
 
             while (!_shouldStop())
             {
@@ -302,6 +291,37 @@ namespace BluetoothAutoLock
 
         private void Tick(DateTime nowUtc)
         {
+            _log.Debug("Tick begin: idle=" + NativeMethods.GetIdleSeconds() + "s");
+            if (_lockLifecycle.ConsumeRearmRequest())
+            {
+                ResetMissingState();
+                _wasConnected = false;
+                _log.Info("Current Windows session unlocked after Bluetooth lock; monitor re-armed with a fresh idle-then-Bluetooth-absence window.");
+                SetStatus("已解锁 — 重新计时", "重新开始：键鼠空闲30秒后检查蓝牙，蓝牙缺失满阈值才会再次锁屏");
+            }
+
+            if (UserReturnPolicy.InputOccurredAfter(_appLockFinishedUtc, DateTime.UtcNow, NativeMethods.GetIdleSeconds()) &&
+                _lockLifecycle.RearmAfterUserReturn())
+            {
+                ResetMissingState();
+                _wasConnected = false;
+                _log.Info("Keyboard/mouse input after locking WeChat/QQ; monitor re-armed with a fresh idle-then-Bluetooth-absence window.");
+                SetStatus("你回来了 — 重新计时", "键鼠空闲30秒后检查蓝牙，蓝牙缺失满阈值才会再次锁定");
+            }
+
+            if (_lockLifecycle.IsLockedUntilSessionUnlock)
+            {
+                return;
+            }
+
+            if (!_cfg.LockScreenEnabled && !LockAppsEnabled())
+            {
+                ResetMissingState();
+                _log.Debug("Lock screen and WeChat/QQ lock are both disabled; skipping Bluetooth probes.");
+                SetStatus("离开后动作都已关闭", "在设置里勾选“锁定 Windows 屏幕”或“锁定微信/QQ”后才会检查蓝牙");
+                return;
+            }
+
             ulong configuredAddress;
             bool hasConfiguredAddress = NativeMethods.TryParseBluetoothAddress(_cfg.DeviceAddress, out configuredAddress);
             if (!hasConfiguredAddress)
@@ -318,7 +338,6 @@ namespace BluetoothAutoLock
             {
                 int remainingIdle = Math.Max(1, idleRequiredSeconds - idleSeconds);
                 ResetMissingState();
-                _lockSuppressed = false;
                 _log.Debug("Keyboard/mouse active " + idleSeconds +
                     "s ago; skipping Bluetooth probes to reduce overhead. Need " +
                     remainingIdle + "s more idle time before Bluetooth scan is needed.");
@@ -339,30 +358,17 @@ namespace BluetoothAutoLock
             }
 
             DeviceSnapshot target = FindTarget(devices);
-            PresenceEvidence evidence = ProbePassivePresence(target, configuredAddress, 3000, true);
+            // 2026-09-15 实测:成功 SDP 响应常见 ~5s,慢响应可达 8.5-10.1s,8s 超时会截断慢响应;
+            // 另一关键实测:扫描(AEP+BLE)会打挂随后 15s 内的 SDP 探测(0/4 成功 vs 不扫描 6/6),
+            // 因此锁屏判定路径(本 Tick)不再穿插主动扫描。
+            _log.Debug("Tick: probing passive presence (timeout=15s, targetSnapshotFound=" + (target != null) + ")...");
+            PresenceEvidence evidence = ProbePassivePresence(target, configuredAddress, 15000, true);
             string targetLabel = evidence.Label;
-
-            ScanHit activeScanHit = null;
-            if (evidence.Confidence != PresenceConfidence.High)
-            {
-                SetStatus("正在主动扫描 Classic 蓝牙", "常规连接状态未命中；只用配置的唯一蓝牙ID确认手机是否在旁边");
-                activeScanHit = BluetoothScanner.FindClassicTargetByAddress(ActiveScanSeconds(), configuredAddress);
-                if (activeScanHit != null)
-                {
-                    targetLabel = DescribeScanHit(activeScanHit);
-                    evidence.Label = targetLabel;
-                    evidence.Set(PresenceConfidence.High, "activeScan=" + targetLabel);
-                    string scanMsg = "Target found by active Bluetooth scan: " + targetLabel;
-                    if (!_wasConnected || _missingSince.HasValue || _lockSuppressed) _log.Info(scanMsg);
-                    else _log.Debug(scanMsg);
-                }
-            }
 
             idleSeconds = NativeMethods.GetIdleSeconds();
             if (idleSeconds < idleRequiredSeconds)
             {
                 ResetMissingState();
-                _lockSuppressed = false;
                 _log.Info("Keyboard/mouse input occurred during Bluetooth check (" + idleSeconds +
                     "s idle); cancelling this lock cycle.");
                 SetStatus("使用中 — 已取消本轮锁屏", "重新等键鼠空闲 " + idleRequiredSeconds + " 秒后再检查蓝牙");
@@ -371,21 +377,17 @@ namespace BluetoothAutoLock
 
             _log.Debug("Probe: target=" + targetLabel +
                 " | " + evidence.ToLogText() +
-                " | activeScan=" + (activeScanHit != null ? "high-confidence-hit" : "miss/skipped") +
                 " => highConfidencePresent=" + (evidence.Confidence == PresenceConfidence.High));
 
             if (ShouldAcceptPresentEvidence(evidence))
             {
                 if (!_wasConnected)
                     _log.Info("Target seen with high-confidence Bluetooth evidence: " + targetLabel + " | " + evidence.Source);
-                else if (_lockSuppressed)
-                    _log.Info("Target detected after Bluetooth lock; re-arming. " + evidence.Source);
                 else if (_missingSince.HasValue)
-                    _log.Info("Target detected again with sustained high-confidence evidence; cancelling Bluetooth-absence lock timer. " + evidence.Source);
+                    _log.Info("Target detected again with high-confidence evidence; cancelling Bluetooth-absence lock timer. " + evidence.Source);
 
                 ResetMissingState();
                 _wasConnected = true;
-                _lockSuppressed = false;
                 SetStatus("已连接：" + targetLabel, "继续监控；蓝牙可见，不会锁屏");
                 return;
             }
@@ -401,13 +403,6 @@ namespace BluetoothAutoLock
             }
 
             _wasConnected = false;
-
-            if (_lockSuppressed)
-            {
-                _log.Debug("Lock already triggered for this absent cycle; waiting for unlock or Bluetooth detection.");
-                SetStatus("已锁屏（等待蓝牙恢复）", "等待解锁或蓝牙恢复后重新计时");
-                return;
-            }
 
             if (!_missingSince.HasValue)
             {
@@ -433,7 +428,6 @@ namespace BluetoothAutoLock
                 _log.Info("Target absent for " + ((int)missingFor) + "s, but keyboard/mouse was active " + idleSeconds +
                     "s ago; cancelling Bluetooth absence window. Need " + remainingIdle + "s more idle time before checking Bluetooth again.");
                 ResetMissingState();
-                _lockSuppressed = false;
                 SetStatus("使用中 — 已取消蓝牙缺失计时", "重新等键鼠空闲 " + idleRequiredSeconds + " 秒后再检查蓝牙");
                 return;
             }
@@ -456,7 +450,6 @@ namespace BluetoothAutoLock
                 _log.Info("Final presence check saw the target; cancelling lock.");
                 ResetMissingState();
                 _wasConnected = true;
-                _lockSuppressed = false;
                 SetStatus("已连接：" + targetLabel, "继续监控；蓝牙可见，不会锁屏");
                 return;
             }
@@ -465,7 +458,6 @@ namespace BluetoothAutoLock
                 _log.Info("Keyboard/mouse input occurred during final Bluetooth check; cancelling lock.");
                 ResetMissingState();
                 _wasConnected = false;
-                _lockSuppressed = false;
                 SetStatus("使用中 — 锁屏已取消", "重新等键鼠空闲 " + idleRequiredSeconds + " 秒后再检查蓝牙");
                 return;
             }
@@ -485,16 +477,61 @@ namespace BluetoothAutoLock
                 return;
             }
 
+            bool lockScreen = _cfg.LockScreenEnabled;
+            bool lockApps = LockAppsEnabled();
             _log.Info("Target absent for at least " + absenceRequiredSeconds +
-                "s after keyboard/mouse idle threshold and no input occurred; triggering configured shortcuts and locking workstation.");
-            TriggerLockShortcutsBeforeLock();
+                "s after keyboard/mouse idle threshold and no input occurred; running leave actions (lockScreen=" +
+                lockScreen + ", lockWeChatQQ=" + lockApps + ").");
+            int appLocks = 0;
+            bool userInputDuringShortcuts = false;
+            DateTime shortcutsFinishedUtc = DateTime.UtcNow;
+            if (lockApps)
+            {
+                appLocks = TriggerLockShortcuts(lockScreen, out userInputDuringShortcuts);
+                shortcutsFinishedUtc = DateTime.UtcNow;
+            }
+            if (!lockScreen)
+            {
+                if (userInputDuringShortcuts)
+                {
+                    _log.Info("Keyboard/mouse input occurred while running the lock shortcuts; the user is back, keep monitoring.");
+                    ResetMissingState();
+                    SetStatus("你回来了 — 继续监控", "键鼠空闲30秒后检查蓝牙");
+                    return;
+                }
+                if (appLocks == 0)
+                {
+                    _log.Warn("No lock shortcut was sent (target not running or sending failed); keep monitoring and retry after the next absence window.");
+                    ResetMissingState();
+                    SetStatus("锁定微信/QQ 没有成功", "目标程序没运行或按键失败；下一轮蓝牙缺失满阈值后再试");
+                    return;
+                }
+                _appLockFinishedUtc = shortcutsFinishedUtc;
+                _lockLifecycle.MarkAppLockSucceeded();
+                _log.Info("WeChat/QQ lock finished without locking the workstation (" + appLocks +
+                    " shortcut(s) sent); waiting for keyboard/mouse input before re-arming.");
+                SetStatus("已锁定微信/QQ（等你回来）", "你回来碰键盘鼠标后重新计时；这期间不会重复锁定");
+                return;
+            }
+
+            if (appLocks > 0 && !userInputDuringShortcuts) WaitBeforeWorkstationLock(appLocks);
+            if (userInputDuringShortcuts ||
+                UserReturnPolicy.InputOccurredAfter(shortcutsFinishedUtc, DateTime.UtcNow, NativeMethods.GetIdleSeconds()))
+            {
+                _log.Info("Keyboard/mouse input occurred during or after the lock shortcuts; cancelling workstation lock.");
+                ResetMissingState();
+                SetStatus("使用中 — 锁屏已取消", "重新等键鼠空闲 " + idleRequiredSeconds + " 秒后再检查蓝牙");
+                return;
+            }
+
             bool ok = false;
             try { ok = NativeMethods.LockWorkStation(); }
             catch (Exception ex) { _log.Error("LockWorkStation threw: " + ex.Message); }
             if (ok)
             {
-                _lockSuppressed = true;
-                SetStatus("已锁屏（等待解锁/蓝牙恢复）", "等待解锁或蓝牙恢复");
+                _lockLifecycle.MarkLockSucceeded();
+                _log.Info("LockWorkStation succeeded; suppressing all monitor actions until the current Windows session unlocks.");
+                SetStatus("已自动锁屏（等待本会话解锁）", "仅当前 Windows 会话解锁后重新计时；蓝牙恢复不会重复锁屏");
             }
             else
             {
@@ -503,32 +540,35 @@ namespace BluetoothAutoLock
             }
         }
 
-        private void TriggerLockShortcutsBeforeLock()
+        private bool LockAppsEnabled()
         {
-            if (_cfg.LockShortcutMappings == null || _cfg.LockShortcutMappings.Count == 0) return;
+            return _cfg.LockShortcutsEnabled && _cfg.LockShortcutMappings != null && _cfg.LockShortcutMappings.Count > 0;
+        }
 
-            SetStatus("触发锁屏快捷键", "正在执行 " + _cfg.LockShortcutMappings.Count + " 个快捷键，然后锁屏");
-            int sent = LockShortcutRunner.TriggerAll(
+        private int TriggerLockShortcuts(bool screenLockFollows, out bool userInputSeen)
+        {
+            SetStatus("锁定微信/QQ", "正在执行 " + _cfg.LockShortcutMappings.Count + " 个锁屏快捷键" + (screenLockFollows ? "，然后锁屏" : ""));
+            return LockShortcutRunner.TriggerAll(
                 _cfg.LockShortcutMappings,
+                _cfg.LockShortcutPreDelayMilliseconds,
                 msg => _log.Info(msg),
-                msg => _log.Warn(msg));
-            if (sent > 0)
-            {
-                int settleMs = Math.Max(0, Math.Min(10000, _cfg.LockShortcutSettleMilliseconds));
-                if (settleMs > 0)
-                {
-                    _log.Info("Waiting " + settleMs + "ms before LockWorkStation so global hotkey handlers can run.");
-                    SetStatus("等待快捷键生效", "已触发 " + sent + " 个快捷键；等待 " + settleMs + "ms 后锁屏");
-                    Thread.Sleep(settleMs);
-                }
-            }
+                msg => _log.Warn(msg),
+                out userInputSeen);
+        }
+
+        private void WaitBeforeWorkstationLock(int sent)
+        {
+            int settleMs = Math.Max(0, Math.Min(10000, _cfg.LockShortcutSettleMilliseconds));
+            if (settleMs <= 0) return;
+            _log.Info("Waiting " + settleMs + "ms before LockWorkStation so global hotkey handlers can run.");
+            SetStatus("等待快捷键生效", "已触发 " + sent + " 个快捷键；等待 " + settleMs + "ms 后锁屏");
+            Thread.Sleep(settleMs);
         }
 
         private void ResetMissingState()
         {
             _missingSince = null;
             _missingProbeCount = 0;
-            _presentConfirmCount = 0;
         }
 
         private PresenceEvidence ProbePassivePresence(DeviceSnapshot target, ulong configuredAddress, int timeoutMs, bool allowPreviousPresenceOnTransient)
@@ -571,38 +611,12 @@ namespace BluetoothAutoLock
 
             return evidence;
         }
-
         private bool ShouldAcceptPresentEvidence(PresenceEvidence evidence)
         {
-            if (evidence == null || evidence.Confidence != PresenceConfidence.High)
-            {
-                _presentConfirmCount = 0;
-                return false;
-            }
-
-            if (!_missingSince.HasValue && !_lockSuppressed)
-            {
-                _presentConfirmCount = 0;
-                return true;
-            }
-
-            _presentConfirmCount++;
-            if (_presentConfirmCount < RequiredHighConfidencePresentConfirmations)
-            {
-                string elapsedText = _missingSince.HasValue
-                    ? (((int)(DateTime.UtcNow - _missingSince.Value).TotalSeconds).ToString() + "s")
-                    : "n/a";
-                _log.Info("High-confidence Bluetooth presence seen during an absence/lock-suppressed cycle (" +
-                    _presentConfirmCount + "/" + RequiredHighConfidencePresentConfirmations +
-                    "); keeping the absence timer until it is confirmed. MissingFor=" +
-                    elapsedText + " | " + evidence.ToLogText());
-                SetStatus("蓝牙疑似恢复 — 确认中",
-                    "已看到高可信蓝牙信号 " + _presentConfirmCount + "/" +
-                    RequiredHighConfidencePresentConfirmations + " 次；确认前不清零缺失计时");
-                return false;
-            }
-
-            return true;
+            // 2026-09-14 误锁根因 B：手机省电静默时偶发的单次高可信命中曾被
+            // “连续 2 次确认”门槛忽略（16:56 误锁）。SDP=true / 可信 RSSI 命中
+            // 本身就是手机回包，单次即应清零缺失计时：宁可暂缓锁屏，也不误锁。
+            return evidence != null && evidence.Confidence == PresenceConfidence.High;
         }
 
         private static string ConfidenceText(PresenceConfidence confidence)
@@ -659,10 +673,16 @@ namespace BluetoothAutoLock
 
         private int ActiveScanSeconds()
         {
-            // The phone may be visible to Windows' AEP/BLE scanner even when
-            // classic fConnected/RFCOMM SDP says false. Keep this bounded so
-            // one monitor tick cannot hang indefinitely.
-            return Math.Max(3, Math.Min(6, Math.Max(1, _cfg.PollingIntervalSeconds)));
+            // 2026-09-15: 主动扫描已从常规 Tick 与终复核 SDP 重试之间移除
+            // (实测扫描会打挂随后 15s 内的 SDP 探测),仅 RunOnce 诊断使用。
+            return Math.Max(5, Math.Min(10, Math.Max(1, _cfg.PollingIntervalSeconds)));
+        }
+
+        private int FinalScanSeconds()
+        {
+            // 终复核全部 SDP 失败后的兜底扫描窗口:最后一道防线,给满 12s 上限,
+            // 尽量覆盖 AEP Updated 事件的最坏到达延迟。
+            return Math.Max(8, Math.Min(12, Math.Max(1, _cfg.PollingIntervalSeconds) + 4));
         }
 
         private static string DescribeScanHit(ScanHit hit)
@@ -672,8 +692,8 @@ namespace BluetoothAutoLock
             string addr = string.IsNullOrEmpty(hit.Address) ? "?" : hit.Address;
             string kind = string.IsNullOrEmpty(hit.Kind) ? "?" : hit.Kind;
             string rssi = hit.RssiDbm.HasValue ? (", RSSI " + hit.RssiDbm.Value + " dBm") : "";
-            string live = hit.LiveSignal ? ", live" : "";
-            return name + " [" + addr + ", " + kind + rssi + live + "]";
+            string signalSource = ", signal=" + (hit.LiveSignal ? "updated" : "added");
+            return name + " [" + addr + ", " + kind + rssi + signalSource + "]";
         }
 
         private FinalCheckResult FinalPresenceCheckBeforeLock(int idleRequiredSeconds)
@@ -709,20 +729,12 @@ namespace BluetoothAutoLock
                 {
                     List<DeviceSnapshot> devices = EnumerateDevices();
                     DeviceSnapshot target = FindTarget(devices);
-                    PresenceEvidence evidence = ProbePassivePresence(target, configuredAddress, 4000, false);
+                    // 终复核是锁屏前最后防线:深睡手机 page 响应可达 5-10s(实测最慢 10.1s),
+                    // 超时给足 15s,否则"在场但响应慢"直接被判缺席。
+                    PresenceEvidence evidence = ProbePassivePresence(target, configuredAddress, 15000, false);
                     present = evidence.Confidence == PresenceConfidence.High;
                     _log.Info("Final presence check " + i + "/" + attempts + ": " +
                         evidence.ToLogText() + " => highConfidencePresent=" + present);
-
-                    if (!present)
-                    {
-                        ScanHit scanHit = BluetoothScanner.FindClassicTargetByAddress(ActiveScanSeconds(), configuredAddress);
-                        if (scanHit != null)
-                        {
-                            present = true;
-                            _log.Info("Final presence check " + i + "/" + attempts + ": active scan saw target " + DescribeScanHit(scanHit));
-                        }
-                    }
                 }
                 catch (Exception ex)
                 {
@@ -751,6 +763,31 @@ namespace BluetoothAutoLock
                         _log.Info("Final presence check wait interrupted by keyboard/mouse input; cancelling lock.");
                         return FinalCheckResult.UserActive;
                     }
+                }
+            }
+
+            // 2026-09-15 实测:主动扫描会打挂随后 15s 内的 SDP 探测,
+            // 所以只在全部 SDP 复核都失败后,做一次兜底扫描。
+            if (!_shouldStop())
+            {
+                int idleBeforeScan = NativeMethods.GetIdleSeconds();
+                if (idleBeforeScan < idleRequiredSeconds)
+                {
+                    _log.Info("Final active scan skipped: keyboard/mouse active " + idleBeforeScan + "s ago; cancelling lock.");
+                    return FinalCheckResult.UserActive;
+                }
+                try
+                {
+                    ScanHit lastScanHit = BluetoothScanner.FindClassicTargetByAddress(FinalScanSeconds(), configuredAddress);
+                    if (lastScanHit != null)
+                    {
+                        _log.Info("Final active scan saw target " + DescribeScanHit(lastScanHit) + "; cancelling lock.");
+                        return FinalCheckResult.TargetPresent;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.Warn("Final active scan failed: " + ex.Message);
                 }
             }
 

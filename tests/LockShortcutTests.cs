@@ -25,7 +25,7 @@ namespace BluetoothAutoLock.Tests
                 ShortcutTestButtonDoesNotUseMessageBox();
                 UiShowsProgramVersion();
                 ProgramSupportsBackgroundShortcutTestCommand();
-                WeChatMappingUsesTargetActivation();
+                PreShortcutMappingRoundTrip();
                 RejectPureModifierShortcut();
                 Console.WriteLine("通过：" + _passed + " 项");
                 return 0;
@@ -160,6 +160,7 @@ namespace BluetoothAutoLock.Tests
                     foregroundBeforeSend = GetForegroundWindow() == form.Handle;
                     sent = LockShortcutRunner.TriggerAll(
                         new[] { new LockShortcutMapping("Ctrl+Alt+Shift+O", "多组合测试") },
+                        0,
                         null,
                         message => { warning = message; });
                 };
@@ -223,6 +224,7 @@ namespace BluetoothAutoLock.Tests
                     sendTimer.Stop();
                     sent = LockShortcutRunner.TriggerAll(
                         new[] { new LockShortcutMapping("Ctrl+Alt+Shift+O", "全局热键测试") },
+                        0,
                         message => { info = message; },
                         message => { warning = message; });
                 };
@@ -291,23 +293,17 @@ namespace BluetoothAutoLock.Tests
             Pass();
         }
 
-        private static void WeChatMappingUsesTargetActivation()
+        private static void PreShortcutMappingRoundTrip()
         {
-            Type mappingType = RequireType("BluetoothAutoLock.LockShortcutMapping");
-            object mapping = Activator.CreateInstance(mappingType, new object[] { "Ctrl+Alt+Shift+O", "锁定微信" });
-            Type resolverType = RequireType("BluetoothAutoLock.LockShortcutTargetResolver");
-            MethodInfo method = resolverType.GetMethod("TryGetTargetProcessNames", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-            Assert(method != null, "应能解析锁屏快捷键目标窗口进程");
-            object[] args = new object[] { mapping, null };
-            bool ok = (bool)method.Invoke(null, args);
-            Assert(ok, "备注包含微信时应启用微信目标窗口激活");
-            string[] names = args[1] as string[];
-            Assert(names != null && Array.IndexOf(names, "Weixin") >= 0, "微信目标窗口应包含 Weixin 进程");
+            LockShortcutMapping mapping;
+            Assert(LockShortcutMapping.TryParseConfigValue("Ctrl+Alt+W>Ctrl+L|锁定微信", out mapping), "应能解析带前置快捷键的映射");
+            AssertEqual("Ctrl+Alt+W", mapping.PreShortcut, "前置快捷键应保留");
+            AssertEqual("Ctrl+L", mapping.Shortcut, "快捷键应保留");
+            AssertEqual("Ctrl+Alt+W>Ctrl+L|锁定微信", mapping.ToConfigValue(), "保存格式应为 前置快捷键>快捷键|备注");
 
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string sourcePath = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "src", "LockShortcuts.cs"));
-            string source = File.ReadAllText(sourcePath);
-            Assert(source.Contains("LockShortcutTargetActivator.TryActivate"), "触发快捷键前应尝试激活目标窗口");
+            Assert(LockShortcutMapping.TryParseConfigValue("Alt+Shift+P|锁定QQ|target=QQ", out mapping), "应能解析带目标程序的映射");
+            AssertEqual("QQ", mapping.TargetProcess, "目标程序应保留");
+            AssertEqual("Alt+Shift+P|锁定QQ|target=QQ", mapping.ToConfigValue(), "保存格式应为 快捷键|备注|target=程序名");
             Pass();
         }
 

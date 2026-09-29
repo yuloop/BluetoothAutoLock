@@ -9,30 +9,21 @@ set REFDIR=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319
 
 if not exist "%BIN%" mkdir "%BIN%"
 
-call "%~dp0test-monitor-policy.cmd"
-if errorlevel 1 (
-    echo [test] MONITOR POLICY FAILED
-    exit /b 1
-)
-
-set LOCKSRC=
-if exist "%SRC%\LockShortcuts.cs" set LOCKSRC="%SRC%\LockShortcuts.cs"
-
 "%CSC%" /nologo /target:exe /platform:x64 /warnaserror+ /utf8output ^
     /reference:"%REFDIR%\System.dll" ^
     /reference:"%REFDIR%\System.Windows.Forms.dll" ^
-    /out:"%BIN%\LockShortcutTests.exe" ^
-    "%SRC%\NativeMethods.cs" "%SRC%\Config.cs" "%SRC%\BluetoothMonitorPolicy.cs" %LOCKSRC% "%TESTS%\LockShortcutTests.cs"
+    /out:"%BIN%\BluetoothMonitorPolicyTests.exe" ^
+    "%SRC%\BluetoothMonitorPolicy.cs" "%SRC%\NativeMethods.cs" "%SRC%\LockShortcuts.cs" "%TESTS%\BluetoothMonitorPolicyTests.cs"
 if errorlevel 1 (
-    echo [test] BUILD FAILED
+    echo [monitor-policy-test] BUILD FAILED
     exit /b 1
 )
 
-"%BIN%\LockShortcutTests.exe"
+"%BIN%\BluetoothMonitorPolicyTests.exe"
 if errorlevel 1 (
-    echo [test] FAILED
+    echo [monitor-policy-test] FAILED
     exit /b 1
 )
 
-echo [test] OK
+echo [monitor-policy-test] OK
 endlocal
