@@ -45,6 +45,7 @@ namespace BluetoothAutoLock
         private bool _findingTarget;
         private ShortcutCaptureHook _captureHook;
         private TextBox _captureHookTarget;
+        private bool _lockShortcutTestRunning;
         private CheckBox _lockScreenChk;
         private CheckBox _lockAppsChk;
         private readonly List<LockShortcutMapping> _lockShortcutMappings = new List<LockShortcutMapping>();
@@ -412,7 +413,7 @@ namespace BluetoothAutoLock
             };
             tab.Controls.Add(_lockShortcutCaptureText);
 
-            _captureHook = new ShortcutCaptureHook(OnHookShortcutCaptured, OnHookShortcutCleared);
+            _captureHook = new ShortcutCaptureHook(OnHookShortcutCaptured, OnHookShortcutCleared, OnHookShortcutCancelled);
             Deactivate += (s, e) => StopShortcutCapture();
             Activated += (s, e) =>
             {
@@ -550,7 +551,7 @@ namespace BluetoothAutoLock
             _captureHookTarget = box;
             if (!_captureHook.Start()) return;
             box.BackColor = Color.LightYellow;
-            SetLockShortcutStatus("正在录制：直接按组合键。录制时会先拦下其他程序的同名快捷键，单独按 Backspace 清空。", Color.FromArgb(0, 96, 160));
+            SetLockShortcutStatus("正在录制：直接按组合键。录制时会先拦下其他程序的同名快捷键；单独按 Backspace 清空，Esc 退出录制。", Color.FromArgb(0, 96, 160));
         }
 
         private void StopShortcutCapture()
@@ -572,6 +573,16 @@ namespace BluetoothAutoLock
                 _capturedLockShortcut = shortcut;
                 _lockShortcutCaptureText.Text = shortcut;
             }
+        }
+
+        private void OnHookShortcutCancelled()
+        {
+            BeginInvoke((MethodInvoker)(() =>
+            {
+                StopShortcutCapture();
+                _lockShortcutNoteText.Focus();
+                SetLockShortcutStatus("已退出录制。", Color.FromArgb(0, 96, 160));
+            }));
         }
 
         private void OnHookShortcutCleared()
@@ -837,6 +848,7 @@ namespace BluetoothAutoLock
             }
 
             int preDelay = _lockShortcutPreDelayNum == null ? 1000 : (int)_lockShortcutPreDelayNum.Value;
+            _lockShortcutTestRunning = true;
             _lockShortcutTestBtn.Enabled = false;
             SetLockShortcutStatus("正在测试：按顺序按下前置快捷键和快捷键……", Color.FromArgb(0, 96, 160));
             Logger log = _log;
@@ -873,6 +885,7 @@ namespace BluetoothAutoLock
                 BeginInvoke((MethodInvoker)(() =>
                 {
                     if (IsDisposed) return;
+                    _lockShortcutTestRunning = false;
                     UpdateLockShortcutButtons();
                     if (warnings.Count > 0)
                         SetLockShortcutStatus("测试按下了 " + sent + " 组快捷键；有 " + warnings.Count + " 组失败：" + warnings[0], Color.DarkOrange);
@@ -926,7 +939,7 @@ namespace BluetoothAutoLock
             if (_lockShortcutClearBtn != null)
                 _lockShortcutClearBtn.Enabled = _lockShortcutMappings.Count > 0;
             if (_lockShortcutTestBtn != null)
-                _lockShortcutTestBtn.Enabled = _lockShortcutMappings.Count > 0;
+                _lockShortcutTestBtn.Enabled = !_lockShortcutTestRunning && _lockShortcutMappings.Count > 0;
         }
 
         private void StartLiveStatusTimer()

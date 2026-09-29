@@ -194,16 +194,10 @@ namespace BluetoothAutoLock.Tests
             int appLock = tick.IndexOf("_lockLifecycle.MarkAppLockSucceeded()", StringComparison.Ordinal);
             int lockWorkstation = tick.IndexOf("NativeMethods.LockWorkStation()", StringComparison.Ordinal);
             Assert(appLock >= 0 && lockWorkstation >= 0 && appLock < lockWorkstation, "关闭锁屏时只锁微信/QQ，必须在调用锁屏之前返回");
-            Pass();
-        }
-
-        private static void ShortcutRunnerSkipsWhenTargetNotForeground()
-        {
-            string source = ReadSource("LockShortcuts.cs");
-            string body = ExtractMethodBody(source, "public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, string weChatShowWindowShortcut, Action<string> info, Action<string> warn)");
-            int ready = body.IndexOf("activation.ReadyToSend", StringComparison.Ordinal);
-            int send = body.IndexOf("SendShortcut(mapping.Shortcut)", StringComparison.Ordinal);
-            Assert(ready >= 0 && send >= 0 && ready < send, "微信/QQ 没切到最前面时不能盲按锁定键");
+            int nothingSent = tick.IndexOf("appLocks == 0", StringComparison.Ordinal);
+            Assert(nothingSent >= 0 && nothingSent < appLock, "一个快捷键都没按出去时不能进入“等你回来”，要继续监控");
+            int recheck = tick.IndexOf("UserReturnPolicy.InputOccurredAfter(shortcutsFinishedUtc", StringComparison.Ordinal);
+            Assert(recheck >= 0 && recheck < lockWorkstation, "按完快捷键后、锁屏前要再确认用户没有回来");
             Pass();
         }
 
@@ -276,6 +270,8 @@ namespace BluetoothAutoLock.Tests
             int main = body.IndexOf("SendShortcut(mapping.Shortcut)", StringComparison.Ordinal);
             Assert(front >= 0 && pre > front && bring > pre && main > bring,
                 "应先判断目标是否已在最前面，再按前置快捷键，再把目标切到最前面，最后按快捷键");
+            int refresh = body.IndexOf("pids = LockShortcutTarget.FindProcessIds(target)", pre, StringComparison.Ordinal);
+            Assert(refresh > pre && refresh < bring, "按完前置快捷键后要重新查目标进程，前置键可能拉起新进程");
             Pass();
         }
 
@@ -305,6 +301,7 @@ namespace BluetoothAutoLock.Tests
             state.Process(System.Windows.Forms.Keys.LWin, false);
 
             Assert(state.Process(System.Windows.Forms.Keys.Back, true) == ShortcutCaptureAction.Cleared, "单独按 Backspace 应清空");
+            Assert(state.Process(System.Windows.Forms.Keys.Escape, true) == ShortcutCaptureAction.Cancelled, "单独按 Esc 应退出录制，键盘不会被一直拦着");
             Assert(state.Process(System.Windows.Forms.Keys.Tab, true) == ShortcutCaptureAction.PassThrough, "单独按 Tab 应放行，方便切到下一个输入框");
             Assert(state.Process(System.Windows.Forms.Keys.Tab, false) == ShortcutCaptureAction.PassThrough, "Tab 松开也应放行");
             Pass();

@@ -305,7 +305,8 @@ namespace BluetoothAutoLock
         PassThrough,
         Swallow,
         Captured,
-        Cleared
+        Cleared,
+        Cancelled
     }
 
     internal sealed class ShortcutCaptureState
@@ -337,6 +338,7 @@ namespace BluetoothAutoLock
             bool noModifiers = !_ctrl && !_alt && !_shift && !_win;
             if (noModifiers && k == Keys.Tab) return ShortcutCaptureAction.PassThrough;
             if (!keyDown) return ShortcutCaptureAction.Swallow;
+            if (noModifiers && k == Keys.Escape) return ShortcutCaptureAction.Cancelled;
             if (noModifiers && (k == Keys.Back || k == Keys.Delete))
             {
                 Captured = "";
@@ -361,12 +363,14 @@ namespace BluetoothAutoLock
         private readonly ShortcutCaptureState _state = new ShortcutCaptureState();
         private readonly Action<string> _captured;
         private readonly Action _cleared;
+        private readonly Action _cancelled;
         private IntPtr _hook = IntPtr.Zero;
 
-        public ShortcutCaptureHook(Action<string> captured, Action cleared)
+        public ShortcutCaptureHook(Action<string> captured, Action cleared, Action cancelled)
         {
             _captured = captured;
             _cleared = cleared;
+            _cancelled = cancelled;
             _callback = HookCallback;
         }
 
@@ -405,6 +409,7 @@ namespace BluetoothAutoLock
                         ShortcutCaptureAction action = _state.Process((Keys)data.vkCode, keyDown);
                         if (action == ShortcutCaptureAction.Captured && _captured != null) _captured(_state.Captured);
                         else if (action == ShortcutCaptureAction.Cleared && _cleared != null) _cleared();
+                        else if (action == ShortcutCaptureAction.Cancelled && _cancelled != null) _cancelled();
                         if (action != ShortcutCaptureAction.PassThrough) return new IntPtr(1);
                     }
                 }
@@ -452,7 +457,14 @@ namespace BluetoothAutoLock
                             SendShortcut(mapping.PreShortcut);
                             preText = " | pre=" + mapping.PreShortcut + " then wait " + preDelay + "ms";
                             if (preDelay > 0) Thread.Sleep(preDelay);
+                            if (pids != null) pids = LockShortcutTarget.FindProcessIds(target);
                         }
+                    }
+
+                    if (pids != null && pids.Count == 0)
+                    {
+                        if (warn != null) warn("Lock shortcut skipped: " + mapping.ToDisplayText() + note + preText + " | target=" + target + " exited after the pre-shortcut");
+                        continue;
                     }
 
                     string targetText = "";
@@ -636,9 +648,15 @@ namespace BluetoothAutoLock
             if (WaitForForeground(pids, 300)) return true;
 
             method = "alt";
-            LockShortcutRunner.SendKey(NativeMethods.VK_MENU, false);
-            NativeMethods.SetForegroundWindow(hwnd);
-            LockShortcutRunner.SendKey(NativeMethods.VK_MENU, true);
+            LockShortcutRunner.SendKey(NativeMethods.VK_MENU, keyUp: false);
+            try
+            {
+                NativeMethods.SetForegroundWindow(hwnd);
+            }
+            finally
+            {
+                LockShortcutRunner.SendKey(NativeMethods.VK_MENU, keyUp: true);
+            }
             return WaitForForeground(pids, 500);
         }
 
