@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace BluetoothAutoLock.Tests
 {
@@ -175,12 +176,16 @@ namespace BluetoothAutoLock.Tests
 
         private static void DeferredAppLockRunsAfterUnlock()
         {
-            Assert(SessionLockPolicy.IsLocked(true, 1, 0), "SessionFlags=0 表示 Windows 会话已锁定");
-            Assert(!SessionLockPolicy.IsLocked(true, 1, 1), "SessionFlags=1 表示未锁定，照常按快捷键");
-            Assert(!SessionLockPolicy.IsLocked(true, 1, -1) && !SessionLockPolicy.IsLocked(false, 0, -1) && !SessionLockPolicy.IsLocked(true, 2, 0),
-                "读不到或读到未知状态时按未锁定处理，不能因此一直不锁");
+            Assert(SessionLockPolicy.IsLocked(1, 0), "SessionFlags=0 表示 Windows 会话已锁定");
+            Assert(!SessionLockPolicy.IsLocked(1, 1), "SessionFlags=1 表示未锁定，照常按快捷键");
+            Assert(!SessionLockPolicy.IsLocked(1, -1) && !SessionLockPolicy.IsLocked(2, 0),
+                "读到未知状态时按未锁定处理，不能因此一直不锁");
+            Assert(Marshal.SizeOf(typeof(NativeMethods.WTSINFOEX)) == 232, "WTSINFOEX 应为 232 字节（x64 实测）");
+            Assert((int)Marshal.OffsetOf(typeof(NativeMethods.WTSINFOEX), "Data") + (int)Marshal.OffsetOf(typeof(NativeMethods.WTSINFOEX_LEVEL1), "SessionFlags") == 16,
+                "SessionFlags 应在 WTSINFOEX 的偏移 16（x64 实测）");
+            Assert((int)Marshal.OffsetOf(typeof(NativeMethods.WTSINFOEX), "Data") + (int)Marshal.OffsetOf(typeof(NativeMethods.WTSINFOEX_LEVEL1), "WinStationName") == 20,
+                "WinStationName 是紧跟在后面的定长字符数组，不是指针（x64 实测在偏移 20）");
             string native = ReadSource("NativeMethods.cs");
-            Assert(native.Contains("Marshal.ReadInt32(buffer, 16)"), "SessionFlags 在 WTSINFOEX 的偏移 16");
             Assert(!native.Contains("OpenInputDesktop"), "UAC 这类安全桌面不算锁屏，不能用接收键鼠的桌面来判断，否则人在电脑前也会被补锁");
 
             string source = ReadSource("BluetoothMonitor.cs");

@@ -96,9 +96,9 @@ namespace BluetoothAutoLock
 
         // WTSINFOEX_LEVEL1.SessionFlags：0=会话已锁定，1=未锁定，-1=未知（Windows 7 上两个值是反的，本程序只用于 Windows 10/11）。
         // UAC 这类安全桌面不算锁屏。读不到或读到未知状态时按未锁定处理，照常去按快捷键，不能因此一直不锁。
-        internal static bool IsLocked(bool queried, int level, int sessionFlags)
+        internal static bool IsLocked(int level, int sessionFlags)
         {
-            return queried && level == 1 && sessionFlags == WtsSessionStateLock;
+            return level == 1 && sessionFlags == WtsSessionStateLock;
         }
     }
 
