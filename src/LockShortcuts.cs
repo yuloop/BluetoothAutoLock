@@ -472,9 +472,16 @@ namespace BluetoothAutoLock
             }
             finally
             {
-                if (_keyboardHook != IntPtr.Zero) NativeMethods.UnhookWindowsHookEx(_keyboardHook);
-                if (_mouseHook != IntPtr.Zero) NativeMethods.UnhookWindowsHookEx(_mouseHook);
+                ReleaseHooks();
             }
+        }
+
+        private void ReleaseHooks()
+        {
+            IntPtr keyboard = Interlocked.Exchange(ref _keyboardHook, IntPtr.Zero);
+            if (keyboard != IntPtr.Zero) NativeMethods.UnhookWindowsHookEx(keyboard);
+            IntPtr mouse = Interlocked.Exchange(ref _mouseHook, IntPtr.Zero);
+            if (mouse != IntPtr.Zero) NativeMethods.UnhookWindowsHookEx(mouse);
         }
 
         private IntPtr KeyboardCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -512,8 +519,16 @@ namespace BluetoothAutoLock
         public void Dispose()
         {
             _ready.Wait(5000);
-            if (_threadId != 0) NativeMethods.PostThreadMessage(_threadId, NativeMethods.WM_QUIT, IntPtr.Zero, IntPtr.Zero);
-            _thread.Join(2000);
+            uint threadId = _threadId;
+            if (threadId != 0)
+            {
+                for (int attempt = 0; attempt < 5; attempt++)
+                {
+                    if (NativeMethods.PostThreadMessage(threadId, NativeMethods.WM_QUIT, IntPtr.Zero, IntPtr.Zero)) break;
+                    Thread.Sleep(100);
+                }
+            }
+            if (!_thread.Join(2000)) ReleaseHooks();
         }
     }
 
@@ -527,12 +542,18 @@ namespace BluetoothAutoLock
 
         public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn, out bool userInputSeen)
         {
-            using (var detector = new RealInputDetector())
+            var detector = new RealInputDetector();
+            try
             {
                 if (!detector.Watching && warn != null) warn("Real keyboard/mouse input detector could not start; only input after the shortcuts can cancel the workstation lock.");
                 int sent = TriggerAllCore(mappings, preDelayMilliseconds, info, warn);
-                userInputSeen = detector.UserInputSeen;
+                Thread.Sleep(100);
                 return sent;
+            }
+            finally
+            {
+                detector.Dispose();
+                userInputSeen = detector.UserInputSeen;
             }
         }
 

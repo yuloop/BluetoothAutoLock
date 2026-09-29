@@ -328,6 +328,10 @@ namespace BluetoothAutoLock.Tests
             Assert(mouse.Contains("return NativeMethods.CallNextHookEx(") && !mouse.Contains("new IntPtr(1)"), "检测钩子只看不拦，鼠标输入必须照常传下去");
             string run = ExtractMethodBody(source, "public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn, out bool userInputSeen)");
             Assert(run.Contains("new RealInputDetector()"), "执行快捷键期间要用真人输入检测器");
+            int dispose = run.IndexOf("detector.Dispose();", StringComparison.Ordinal);
+            int read = run.IndexOf("userInputSeen = detector.UserInputSeen;", StringComparison.Ordinal);
+            Assert(dispose >= 0 && read > dispose, "要在检测器停下之后再读结果，最后一刻的输入也不能漏");
+            Assert(source.Contains("if (!_thread.Join(2000)) ReleaseHooks();"), "检测线程没按时退出时要直接撤掉钩子，不能让钩子一直挂着");
             Pass();
         }
 
