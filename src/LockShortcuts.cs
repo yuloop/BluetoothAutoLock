@@ -468,6 +468,7 @@ namespace BluetoothAutoLock
                 _keyboardHook = NativeMethods.SetWindowsHookEx(NativeMethods.WH_KEYBOARD_LL, _keyboardCallback, module, 0);
                 _mouseHook = NativeMethods.SetWindowsHookEx(NativeMethods.WH_MOUSE_LL, _mouseCallback, module, 0);
             }
+            UIntPtr wakeTimer = NativeMethods.SetTimer(IntPtr.Zero, UIntPtr.Zero, 200, IntPtr.Zero);
             _ready.Set();
             try
             {
@@ -477,6 +478,7 @@ namespace BluetoothAutoLock
             }
             finally
             {
+                if (wakeTimer != UIntPtr.Zero) NativeMethods.KillTimer(IntPtr.Zero, wakeTimer);
                 ReleaseHooks();
             }
         }

@@ -332,6 +332,8 @@ namespace BluetoothAutoLock.Tests
             int read = run.IndexOf("userInputSeen = detector.UserInputSeen;", StringComparison.Ordinal);
             Assert(dispose >= 0 && read > dispose, "要在检测器停下之后再读结果，最后一刻的输入也不能漏");
             Assert(source.Contains("if (!_thread.Join(2000)) ReleaseHooks();"), "检测线程没按时退出时要直接撤掉钩子，不能让钩子一直挂着");
+            Assert(source.Contains("NativeMethods.SetTimer(IntPtr.Zero, UIntPtr.Zero, 200, IntPtr.Zero)") && source.Contains("while (!_stopRequested && NativeMethods.GetMessage("),
+                "检测线程要定时醒来检查停止标记，不能只靠退出消息");
             Pass();
         }
 
