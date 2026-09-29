@@ -12,7 +12,7 @@ namespace BluetoothAutoLock.Tests
         {
             try
             {
-                AcceptsActualClassicAddedRssi();
+                AcceptsPhysicalRangeRssi();
                 RejectsCachedAndSentinelRssi();
                 RequiresRealLockBeforeRearm();
                 SuppressesUntilMonitorConsumesCurrentSessionUnlock();
@@ -40,12 +40,12 @@ namespace BluetoothAutoLock.Tests
             }
         }
 
-        private static void AcceptsActualClassicAddedRssi()
+        private static void AcceptsPhysicalRangeRssi()
         {
-            // 实测：手机的 Classic 信号 RSSI -3 dBm / LIVE=no。
-            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-3), "Classic 的 -3 dBm 真实 Added 信号必须视为在场");
-            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-99), "物理范围内的弱 Classic RSSI 必须视为在场");
-            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-1), "物理范围上界的 Classic RSSI 必须视为在场");
+            // 只检查 RSSI 数值范围；是否为实时信号由扫描器的 LiveSignal 判断。
+            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-3), "物理范围内的强 Classic RSSI 必须视为可信数值");
+            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-99), "物理范围内的弱 Classic RSSI 必须视为可信数值");
+            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-1), "物理范围上界的 Classic RSSI 必须视为可信数值");
             Pass();
         }
 
@@ -115,7 +115,7 @@ namespace BluetoothAutoLock.Tests
             string source = ReadSource("WinRtBluetooth.cs");
             string body = ExtractMethodBody(source, "private static bool HasCredibleClassicRadioEvidence(ScanHit hit)");
             Assert(body.Contains("ClassicBluetoothEvidence.HasCredibleRssi(hit.RssiDbm)"), "Classic 扫描命中必须委托统一 RSSI 策略");
-            Assert(!body.Contains("!hit.LiveSignal"), "Classic 的有效 RSSI 命中不得因 LIVE=no 被丢弃");
+            Assert(body.Contains("hit.LiveSignal &&"), "已配对手机离开后扫描仍会报缓存的 RSSI，只能认实时信号");
             Pass();
         }
 

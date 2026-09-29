@@ -132,9 +132,11 @@ namespace BluetoothAutoLock
             int boundedSeconds = Math.Max(1, Math.Min(12, seconds));
             List<ScanHit> hits = Scan(boundedSeconds);
 
-            // Windows 有时只在 AEP Added 事件中返回 Classic 的真实 RSSI，随后并不会
-            // 产生 Updated 事件。此时 LiveSignal=false 仍可能是手机就在旁边的强信号，
-            // 不能据此丢弃；离线缓存则以 0/-127/-128 等哨兵 RSSI 排除。
+            // 已配对的手机不在附近时，AEP Added 事件仍会带上 Windows 缓存的上次 RSSI
+            // （2026-09-29 实测：手机离开后每次扫描都报 -17 dBm、LIVE=no），
+            // 所以只认本次扫描里实时收到的信号（Updated 事件或广播）。
+            // 代价：不可被发现、也不发同地址广播的手机，这次扫描看不到它，
+            // 是否在场只由前面的 SDP 复核决定（SDP 才是主要在场证据）。
             //
             // 不回退到名称匹配：手机关闭 Classic 后可能仍暴露同名的其他 BLE 身份。
             return FindMatchingAddressHit(hits, address, HasCredibleClassicRadioEvidence);
@@ -151,6 +153,7 @@ namespace BluetoothAutoLock
         {
             return hit != null &&
                 IsClassic(hit) &&
+                hit.LiveSignal &&
                 ClassicBluetoothEvidence.HasCredibleRssi(hit.RssiDbm);
         }
 
