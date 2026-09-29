@@ -90,17 +90,15 @@ namespace BluetoothAutoLock
         }
     }
 
-    internal static class InputDesktopPolicy
+    internal static class SessionLockPolicy
     {
-        internal const int ErrorAccessDenied = 5;
+        internal const int WtsSessionStateLock = 0;
 
-        // Windows 锁屏（或弹出 UAC 这类安全桌面）时，接收键鼠的是 Winlogon 桌面：
-        // 普通程序打不开它，模拟按键也送不到微信/QQ。判断不了时按“可用”处理，照常去按。
-        internal static bool IsUserDesktop(bool opened, int openError, string desktopName)
+        // WTSINFOEX_LEVEL1.SessionFlags：0=会话已锁定，1=未锁定，-1=未知（Windows 7 上两个值是反的，本程序只用于 Windows 10/11）。
+        // UAC 这类安全桌面不算锁屏。读不到或读到未知状态时按未锁定处理，照常去按快捷键，不能因此一直不锁。
+        internal static bool IsLocked(bool queried, int level, int sessionFlags)
         {
-            if (!opened) return openError != ErrorAccessDenied;
-            return string.IsNullOrEmpty(desktopName) ||
-                string.Equals(desktopName, "Default", StringComparison.OrdinalIgnoreCase);
+            return queried && level == 1 && sessionFlags == WtsSessionStateLock;
         }
     }
 

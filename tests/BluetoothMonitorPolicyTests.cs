@@ -104,7 +104,7 @@ namespace BluetoothAutoLock.Tests
             string tick = ExtractMethodBody(source, "private void Tick(DateTime nowUtc)");
             Assert(!tick.Contains("FindClassicTargetByAddress"), "Tick 不得在 SDP 探测路径中插入主动扫描");
 
-            string final = ExtractMethodBody(source, "private FinalCheckResult FinalPresenceCheckBeforeLock(int idleRequiredSeconds, bool allowFallbackScan)");
+            string final = ExtractMethodBody(source, "private FinalCheckResult FinalPresenceCheckBeforeLock(int idleRequiredSeconds)");
             Assert(final.Contains("Final active scan saw target"), "终复核必须保留一次兜底主动扫描");
             string[] parts = final.Split(new string[] { "FindClassicTargetByAddress" }, StringSplitOptions.None);
             Assert(parts.Length - 1 == 1, "终复核中的兜底扫描只允许出现一次");
@@ -175,11 +175,13 @@ namespace BluetoothAutoLock.Tests
 
         private static void DeferredAppLockRunsAfterUnlock()
         {
-            Assert(!InputDesktopPolicy.IsUserDesktop(false, 5, null), "Windows 锁屏时打不开接收键鼠的桌面（拒绝访问），按键送不到微信/QQ");
-            Assert(!InputDesktopPolicy.IsUserDesktop(true, 0, "Winlogon"), "接收键鼠的是 Winlogon 桌面时，按键送不到微信/QQ");
-            Assert(InputDesktopPolicy.IsUserDesktop(true, 0, "Default"), "正常桌面可以直接按快捷键");
-            Assert(InputDesktopPolicy.IsUserDesktop(false, 6, null) && InputDesktopPolicy.IsUserDesktop(true, 0, null),
-                "判断不了时按可用处理，照常去按，不能因此一直不锁");
+            Assert(SessionLockPolicy.IsLocked(true, 1, 0), "SessionFlags=0 表示 Windows 会话已锁定");
+            Assert(!SessionLockPolicy.IsLocked(true, 1, 1), "SessionFlags=1 表示未锁定，照常按快捷键");
+            Assert(!SessionLockPolicy.IsLocked(true, 1, -1) && !SessionLockPolicy.IsLocked(false, 0, -1) && !SessionLockPolicy.IsLocked(true, 2, 0),
+                "读不到或读到未知状态时按未锁定处理，不能因此一直不锁");
+            string native = ReadSource("NativeMethods.cs");
+            Assert(native.Contains("Marshal.ReadInt32(buffer, 16)"), "SessionFlags 在 WTSINFOEX 的偏移 16");
+            Assert(!native.Contains("OpenInputDesktop"), "UAC 这类安全桌面不算锁屏，不能用接收键鼠的桌面来判断，否则人在电脑前也会被补锁");
 
             string source = ReadSource("BluetoothMonitor.cs");
             string tick = ExtractMethodBody(source, "private void Tick(DateTime nowUtc)");
@@ -187,15 +189,17 @@ namespace BluetoothAutoLock.Tests
             int deferred = tick.IndexOf("if (_appLockDeferred)", StringComparison.Ordinal);
             int firstProbe = tick.IndexOf("NativeMethods.TryParseBluetoothAddress", StringComparison.Ordinal);
             Assert(guard >= 0 && deferred > guard && deferred < firstProbe, "有待补锁时先处理补锁，不再跑普通的蓝牙缺失计时");
-            int desktopCheck = tick.IndexOf("NativeMethods.IsInputDesktopAvailable()", StringComparison.Ordinal);
+            int lockCheck = tick.IndexOf("NativeMethods.IsSessionLocked()", StringComparison.Ordinal);
             int trigger = tick.IndexOf("TriggerLockShortcuts(", StringComparison.Ordinal);
-            Assert(desktopCheck >= 0 && desktopCheck < trigger, "按快捷键前要先确认 Windows 没有锁屏");
+            Assert(lockCheck >= 0 && lockCheck < trigger, "按快捷键前要先确认 Windows 没有锁屏");
             Assert(tick.Contains("_appLockDeferred = true;"), "Windows 锁着时要记下待补锁");
 
             string relock = ExtractMethodBody(source, "private void RunDeferredAppLock()");
-            int wait = relock.IndexOf("NativeMethods.IsInputDesktopAvailable()", StringComparison.Ordinal);
-            int check = relock.IndexOf("FinalPresenceCheckBeforeLock(0, false)", StringComparison.Ordinal);
+            int address = relock.IndexOf("NativeMethods.TryParseBluetoothAddress", StringComparison.Ordinal);
+            int wait = relock.IndexOf("NativeMethods.IsSessionLocked()", StringComparison.Ordinal);
+            int check = relock.IndexOf("FinalPresenceCheckBeforeLock(0)", StringComparison.Ordinal);
             int lockApps = relock.IndexOf("TriggerLockShortcuts(", StringComparison.Ordinal);
+            Assert(address >= 0 && address < check, "没配置手机地址时不能补锁：判断不了手机在不在");
             Assert(wait >= 0 && check > wait && lockApps > check, "解锁后先确认手机不在旁边再补锁；解锁的人正在操作，不能看键鼠空闲");
 
             string unlock = ExtractMethodBody(source, "public void ReArmAfterSessionUnlock()");

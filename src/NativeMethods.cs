@@ -380,42 +380,36 @@ namespace BluetoothAutoLock
             }
         }
 
-        private const uint DESKTOP_READOBJECTS = 0x0001;
-        private const int UOI_NAME = 2;
+        private const int WTS_CURRENT_SESSION = -1;
+        private const int WTSSessionInfoEx = 25;
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern IntPtr OpenInputDesktop(uint dwFlags, [MarshalAs(UnmanagedType.Bool)] bool fInherit, uint dwDesiredAccess);
-
-        [DllImport("user32.dll")]
+        [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool CloseDesktop(IntPtr hDesktop);
+        private static extern bool WTSQuerySessionInformation(IntPtr hServer, int sessionId, int wtsInfoClass, out IntPtr ppBuffer, out int pBytesReturned);
 
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex, StringBuilder pvInfo, int nLength, out int lpnLengthNeeded);
+        [DllImport("wtsapi32.dll")]
+        private static extern void WTSFreeMemory(IntPtr pMemory);
 
-        public static bool IsInputDesktopAvailable()
+        public static bool IsSessionLocked()
         {
+            IntPtr buffer = IntPtr.Zero;
             try
             {
-                IntPtr desktop = OpenInputDesktop(0, false, DESKTOP_READOBJECTS);
-                if (desktop == IntPtr.Zero)
-                    return InputDesktopPolicy.IsUserDesktop(false, Marshal.GetLastWin32Error(), null);
-                try
-                {
-                    var name = new StringBuilder(256);
-                    int needed;
-                    bool named = GetUserObjectInformation(desktop, UOI_NAME, name, name.Capacity * 2, out needed);
-                    return InputDesktopPolicy.IsUserDesktop(true, 0, named ? name.ToString() : null);
-                }
-                finally
-                {
-                    CloseDesktop(desktop);
-                }
+                int bytes;
+                bool queried = WTSQuerySessionInformation(IntPtr.Zero, WTS_CURRENT_SESSION, WTSSessionInfoEx, out buffer, out bytes) &&
+                    buffer != IntPtr.Zero && bytes >= 20;
+                // WTSINFOEX：Level 在偏移 0；WTSINFOEX_LEVEL1 按 8 字节对齐从偏移 8 开始，SessionFlags 在偏移 16。
+                return SessionLockPolicy.IsLocked(queried,
+                    queried ? Marshal.ReadInt32(buffer, 0) : 0,
+                    queried ? Marshal.ReadInt32(buffer, 16) : -1);
             }
             catch
             {
-                return true;
+                return false;
+            }
+            finally
+            {
+                if (buffer != IntPtr.Zero) WTSFreeMemory(buffer);
             }
         }
 

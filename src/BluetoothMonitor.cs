@@ -455,7 +455,7 @@ namespace BluetoothAutoLock
 
             _log.Info("Target absent for " + ((int)missingFor) + "s after keyboard/mouse idle threshold; running final Bluetooth presence check before lock.");
             SetStatus("条件满足 — 锁屏前复核", "最后扫描目标蓝牙并检查键鼠；扫到或使用电脑都会取消");
-            FinalCheckResult finalResult = FinalPresenceCheckBeforeLock(idleRequiredSeconds, true);
+            FinalCheckResult finalResult = FinalPresenceCheckBeforeLock(idleRequiredSeconds);
             if (finalResult == FinalCheckResult.TargetPresent)
             {
                 _log.Info("Final presence check saw the target; cancelling lock.");
@@ -498,16 +498,16 @@ namespace BluetoothAutoLock
             DateTime shortcutsFinishedUtc = DateTime.UtcNow;
             if (lockApps)
             {
-                if (NativeMethods.IsInputDesktopAvailable())
-                {
-                    appLocks = TriggerLockShortcuts(lockScreen, out userInputDuringShortcuts);
-                }
-                else
+                if (NativeMethods.IsSessionLocked())
                 {
                     // Windows 已经锁屏（例如远程软件断开时锁的），模拟按键送不到微信/QQ；
                     // 先记下来，Windows 解锁时手机还不在旁边就马上补锁。
                     _appLockDeferred = true;
                     _log.Info("Windows is already locked, so shortcuts cannot reach WeChat/QQ; deferring the WeChat/QQ lock until the session unlocks and the target is still away.");
+                }
+                else
+                {
+                    appLocks = TriggerLockShortcuts(lockScreen, out userInputDuringShortcuts);
                 }
                 shortcutsFinishedUtc = DateTime.UtcNow;
             }
@@ -569,12 +569,14 @@ namespace BluetoothAutoLock
 
         private void RunDeferredAppLock()
         {
-            if (!LockAppsEnabled())
+            ulong configuredAddress;
+            if (!LockAppsEnabled() || !NativeMethods.TryParseBluetoothAddress(_cfg.DeviceAddress, out configuredAddress))
             {
                 _appLockDeferred = false;
+                _log.Info("Deferred WeChat/QQ lock dropped: WeChat/QQ lock is off or no target Classic Bluetooth address is configured.");
                 return;
             }
-            if (!NativeMethods.IsInputDesktopAvailable())
+            if (NativeMethods.IsSessionLocked())
             {
                 _log.Debug("Windows is still locked; the deferred WeChat/QQ lock waits for the session to unlock.");
                 SetDeferredAppLockStatus();
@@ -583,9 +585,8 @@ namespace BluetoothAutoLock
 
             _appLockDeferred = false;
             _log.Info("Windows is unlocked again; checking whether the target is still away before the deferred WeChat/QQ lock.");
-            // 解锁的人正在操作电脑，所以不看键鼠空闲；也不做兜底扫描（要多等 12 秒，
-            // 而且平时扫不到手机），SDP 复核完就尽快锁定。
-            FinalCheckResult result = FinalPresenceCheckBeforeLock(0, false);
+            // 解锁的人正在操作电脑，所以复核时不看键鼠空闲（传 0），其余和平时锁定前的复核一样。
+            FinalCheckResult result = FinalPresenceCheckBeforeLock(0);
             ResetMissingState();
             if (result == FinalCheckResult.TargetPresent)
             {
@@ -596,7 +597,7 @@ namespace BluetoothAutoLock
             }
             _wasConnected = false;
             if (_shouldStop()) return;
-            if (!NativeMethods.IsInputDesktopAvailable())
+            if (NativeMethods.IsSessionLocked())
             {
                 _appLockDeferred = true;
                 _log.Info("Windows was locked again during the Bluetooth check; the WeChat/QQ lock stays deferred.");
@@ -780,7 +781,7 @@ namespace BluetoothAutoLock
             return name + " [" + addr + ", " + kind + rssi + signalSource + "]";
         }
 
-        private FinalCheckResult FinalPresenceCheckBeforeLock(int idleRequiredSeconds, bool allowFallbackScan)
+        private FinalCheckResult FinalPresenceCheckBeforeLock(int idleRequiredSeconds)
         {
             int attempts = FinalRecheckAttempts();
             int waitMs = Math.Max(800, Math.Min(2000, Math.Max(1, _cfg.PollingIntervalSeconds) * 500));
@@ -852,7 +853,7 @@ namespace BluetoothAutoLock
 
             // 2026-09-15 实测:主动扫描会打挂随后 15s 内的 SDP 探测,
             // 所以只在全部 SDP 复核都失败后,做一次兜底扫描。
-            if (allowFallbackScan && !_shouldStop())
+            if (!_shouldStop())
             {
                 int idleBeforeScan = NativeMethods.GetIdleSeconds();
                 if (idleBeforeScan < idleRequiredSeconds)
