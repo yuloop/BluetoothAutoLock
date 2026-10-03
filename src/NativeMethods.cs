@@ -380,6 +380,74 @@ namespace BluetoothAutoLock
             }
         }
 
+        private const int WTS_CURRENT_SESSION = -1;
+        private const int WTSSessionInfoEx = 25;
+
+        [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool WTSQuerySessionInformation(IntPtr hServer, int sessionId, int wtsInfoClass, out IntPtr ppBuffer, out int pBytesReturned);
+
+        [DllImport("wtsapi32.dll")]
+        private static extern void WTSFreeMemory(IntPtr pMemory);
+
+        // 与 Windows SDK（WtsApi32.h）的 WTSINFOEXW / WTSINFOEX_LEVEL1_W 一致：WinStationName[33]、UserName[21]、
+        // DomainName[18]（DOMAIN_LENGTH=17）都是定长字符数组，没有指针，所以 x86 和 x64 的布局一样
+        // （x64 实测 232 字节，SessionFlags 在偏移 16）。这里只用它算字段偏移，不整体封送。
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct WTSINFOEX_LEVEL1
+        {
+            public int SessionId;
+            public int SessionState;
+            public int SessionFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 33)]
+            public string WinStationName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 21)]
+            public string UserName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 18)]
+            public string DomainName;
+            public long LogonTime;
+            public long ConnectTime;
+            public long DisconnectTime;
+            public long LastInputTime;
+            public long CurrentTime;
+            public uint IncomingBytes;
+            public uint OutgoingBytes;
+            public uint IncomingFrames;
+            public uint OutgoingFrames;
+            public uint IncomingCompressedBytes;
+            public uint OutgoingCompressedBytes;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct WTSINFOEX
+        {
+            public int Level;
+            public WTSINFOEX_LEVEL1 Data;
+        }
+
+        public static bool IsSessionLocked()
+        {
+            IntPtr buffer = IntPtr.Zero;
+            try
+            {
+                int flagsOffset = (int)Marshal.OffsetOf(typeof(WTSINFOEX), "Data") +
+                    (int)Marshal.OffsetOf(typeof(WTSINFOEX_LEVEL1), "SessionFlags");
+                int bytes;
+                if (!WTSQuerySessionInformation(IntPtr.Zero, WTS_CURRENT_SESSION, WTSSessionInfoEx, out buffer, out bytes) ||
+                    buffer == IntPtr.Zero || bytes < flagsOffset + 4)
+                    return false;
+                return SessionLockPolicy.IsLocked(Marshal.ReadInt32(buffer), Marshal.ReadInt32(buffer, flagsOffset));
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                if (buffer != IntPtr.Zero) WTSFreeMemory(buffer);
+            }
+        }
+
         public static INPUT CreateKeyboardInput(ushort virtualKey, bool keyUp)
         {
             var input = new INPUT();

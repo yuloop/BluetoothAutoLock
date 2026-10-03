@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace BluetoothAutoLock.Tests
 {
@@ -12,7 +13,7 @@ namespace BluetoothAutoLock.Tests
         {
             try
             {
-                AcceptsActualClassicAddedRssi();
+                AcceptsPhysicalRangeRssi();
                 RejectsCachedAndSentinelRssi();
                 RequiresRealLockBeforeRearm();
                 SuppressesUntilMonitorConsumesCurrentSessionUnlock();
@@ -23,6 +24,7 @@ namespace BluetoothAutoLock.Tests
                 SessionHandlerRequiresActualUnlock();
                 SdpPresenceRequiresServiceRecords();
                 AppLockWaitsForUserReturn();
+                DeferredAppLockRunsAfterUnlock();
                 UserReturnIgnoresInjectedInput();
                 LeaveActionsRespectToggles();
                 ParsesPreShortcutMapping();
@@ -40,12 +42,12 @@ namespace BluetoothAutoLock.Tests
             }
         }
 
-        private static void AcceptsActualClassicAddedRssi()
+        private static void AcceptsPhysicalRangeRssi()
         {
-            // 实测：手机的 Classic 信号 RSSI -3 dBm / LIVE=no。
-            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-3), "Classic 的 -3 dBm 真实 Added 信号必须视为在场");
-            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-99), "物理范围内的弱 Classic RSSI 必须视为在场");
-            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-1), "物理范围上界的 Classic RSSI 必须视为在场");
+            // 只检查 RSSI 数值范围；是否为实时信号由扫描器的 LiveSignal 判断。
+            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-3), "物理范围内的强 Classic RSSI 必须视为可信数值");
+            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-99), "物理范围内的弱 Classic RSSI 必须视为可信数值");
+            Assert(ClassicBluetoothEvidence.HasCredibleRssi(-1), "物理范围上界的 Classic RSSI 必须视为可信数值");
             Pass();
         }
 
@@ -115,7 +117,7 @@ namespace BluetoothAutoLock.Tests
             string source = ReadSource("WinRtBluetooth.cs");
             string body = ExtractMethodBody(source, "private static bool HasCredibleClassicRadioEvidence(ScanHit hit)");
             Assert(body.Contains("ClassicBluetoothEvidence.HasCredibleRssi(hit.RssiDbm)"), "Classic 扫描命中必须委托统一 RSSI 策略");
-            Assert(!body.Contains("!hit.LiveSignal"), "Classic 的有效 RSSI 命中不得因 LIVE=no 被丢弃");
+            Assert(body.Contains("hit.LiveSignal &&"), "已配对手机离开后扫描仍会报缓存的 RSSI，只能认实时信号");
             Pass();
         }
 
@@ -169,6 +171,48 @@ namespace BluetoothAutoLock.Tests
 
             state.MarkLockSucceeded();
             Assert(!state.RearmAfterUserReturn(), "锁屏后只能由 Windows 解锁事件重新开始，键鼠输入不算");
+            Pass();
+        }
+
+        private static void DeferredAppLockRunsAfterUnlock()
+        {
+            Assert(SessionLockPolicy.IsLocked(1, 0), "SessionFlags=0 表示 Windows 会话已锁定");
+            Assert(!SessionLockPolicy.IsLocked(1, 1), "SessionFlags=1 表示未锁定，照常按快捷键");
+            Assert(!SessionLockPolicy.IsLocked(1, -1) && !SessionLockPolicy.IsLocked(2, 0),
+                "读到未知状态时按未锁定处理，不能因此一直不锁");
+            Assert(Marshal.SizeOf(typeof(NativeMethods.WTSINFOEX)) == 232, "WTSINFOEX 应为 232 字节（x64 实测）");
+            Assert((int)Marshal.OffsetOf(typeof(NativeMethods.WTSINFOEX), "Data") + (int)Marshal.OffsetOf(typeof(NativeMethods.WTSINFOEX_LEVEL1), "SessionFlags") == 16,
+                "SessionFlags 应在 WTSINFOEX 的偏移 16（x64 实测）");
+            Assert((int)Marshal.OffsetOf(typeof(NativeMethods.WTSINFOEX), "Data") + (int)Marshal.OffsetOf(typeof(NativeMethods.WTSINFOEX_LEVEL1), "WinStationName") == 20,
+                "WinStationName 是紧跟在后面的定长字符数组，不是指针（x64 实测在偏移 20）");
+            string native = ReadSource("NativeMethods.cs");
+            Assert(!native.Contains("OpenInputDesktop"), "UAC 这类安全桌面不算锁屏，不能用接收键鼠的桌面来判断，否则人在电脑前也会被补锁");
+
+            string source = ReadSource("BluetoothMonitor.cs");
+            string tick = ExtractMethodBody(source, "private void Tick(DateTime nowUtc)");
+            int guard = tick.IndexOf("_lockLifecycle.IsLockedUntilSessionUnlock", StringComparison.Ordinal);
+            int deferred = tick.IndexOf("if (_appLockDeferred)", StringComparison.Ordinal);
+            int firstProbe = tick.IndexOf("NativeMethods.TryParseBluetoothAddress", StringComparison.Ordinal);
+            Assert(guard >= 0 && deferred > guard && deferred < firstProbe, "有待补锁时先处理补锁，不再跑普通的蓝牙缺失计时");
+            int lockCheck = tick.IndexOf("NativeMethods.IsSessionLocked()", StringComparison.Ordinal);
+            int trigger = tick.IndexOf("TriggerLockShortcuts(", StringComparison.Ordinal);
+            Assert(lockCheck >= 0 && lockCheck < trigger, "按快捷键前要先确认 Windows 没有锁屏");
+            Assert(tick.Contains("_appLockDeferred = true;"), "Windows 锁着时要记下待补锁");
+
+            string relock = ExtractMethodBody(source, "private void RunDeferredAppLock()");
+            int address = relock.IndexOf("NativeMethods.TryParseBluetoothAddress", StringComparison.Ordinal);
+            int wait = relock.IndexOf("NativeMethods.IsSessionLocked()", StringComparison.Ordinal);
+            int check = relock.IndexOf("FinalPresenceCheckBeforeLock(0)", StringComparison.Ordinal);
+            int lockApps = relock.IndexOf("TriggerLockShortcuts(", StringComparison.Ordinal);
+            Assert(address >= 0 && address < check, "没配置手机地址时不能补锁：判断不了手机在不在");
+            Assert(wait >= 0 && check > wait && lockApps > check, "解锁后先确认手机不在旁边再补锁；解锁的人正在操作，不能看键鼠空闲");
+
+            string unlock = ExtractMethodBody(source, "public void ReArmAfterSessionUnlock()");
+            int wake = unlock.IndexOf("_wakeRequested = true;", StringComparison.Ordinal);
+            int rearm = unlock.IndexOf("RequestRearmAfterSessionUnlock()", StringComparison.Ordinal);
+            Assert(wake >= 0 && wake < rearm, "Windows 一解锁就叫醒监控线程，不管是不是本程序锁的屏");
+            string loop = ExtractMethodBody(source, "public void RunLoop()");
+            Assert(loop.Contains("!_wakeRequested"), "监控线程等待时要能被解锁事件提前叫醒");
             Pass();
         }
 
