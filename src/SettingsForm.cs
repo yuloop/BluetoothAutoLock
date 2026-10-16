@@ -345,7 +345,7 @@ namespace BluetoothAutoLock
                 Left = left,
                 Top = y,
                 Width = width,
-                Height = 168,
+                Height = 156,
                 View = View.Details,
                 FullRowSelect = true,
                 GridLines = true,
@@ -533,7 +533,7 @@ namespace BluetoothAutoLock
 
             _lockShortcutHideChk = new CheckBox
             {
-                Text = "锁完再按一次前置键，把窗口隐藏起来（前置键=该程序显示/隐藏窗口的全局热键）",
+                Text = "锁完再按一次前置键，把窗口隐藏起来（前置键=该程序显示/隐藏窗口的全局热键；只对填了目标程序、且窗口在最前面的行生效）",
                 Left = left,
                 Top = y + 2,
                 Width = width,
@@ -541,7 +541,7 @@ namespace BluetoothAutoLock
                 Font = normalFont
             };
             tab.Controls.Add(_lockShortcutHideChk);
-            y += 32;
+            y += 30;
 
             _lockShortcutStatusLabel = new Label
             {

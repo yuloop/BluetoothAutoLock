@@ -321,6 +321,9 @@ namespace BluetoothAutoLock.Tests
                 "应先判断目标是否已在最前面，再按前置快捷键，再把目标切到最前面，最后按快捷键");
             int hide = body.IndexOf("SendShortcut(mapping.PreShortcut)", main, StringComparison.Ordinal);
             Assert(hide > main, "锁完窗口后才再按一次前置键，把刚锁上的窗口隐藏起来");
+            int hideGuard = body.IndexOf("LockShortcutTarget.IsFrontMost(pids)", main, StringComparison.Ordinal);
+            Assert(hideGuard > main && hideGuard < hide,
+                "前置键是切换键：只有确认目标窗口此刻确实在最前面，才敢按它隐藏窗口");
             int refresh = body.IndexOf("pids = LockShortcutTarget.FindProcessIds(target)", pre, StringComparison.Ordinal);
             Assert(refresh > pre && refresh < bring, "按完前置快捷键后要重新查目标进程，前置键可能拉起新进程");
             int notRunning = body.IndexOf("is not running", StringComparison.Ordinal);

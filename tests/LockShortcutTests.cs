@@ -355,6 +355,8 @@ namespace BluetoothAutoLock.Tests
                 "只对填了前置快捷键的行再按一次隐藏键");
             Assert(runner.Contains("Lock shortcut window hidden: \" + mapping.PreShortcut"),
                 "隐藏窗口要单独记一行日志，方便核对按键真的发出去了");
+            Assert(runner.Contains("Lock shortcut hide skipped"),
+                "拿不准窗口是不是在最前面（没配目标程序 / 目标不在最前）时要跳过隐藏并说明原因，不能瞎按切换键");
 
             Assert(File.ReadAllText(monitorPath).Contains("_cfg.LockShortcutHideAfterwards"),
                 "手机离开后的动作应把开关传给快捷键执行器");

@@ -627,20 +627,38 @@ namespace BluetoothAutoLock
                         // 的全局热键（微信 Ctrl+Alt+W、QQ Ctrl+Alt+Shift+Q）。刚才按它是把窗口叫出来
                         // 锁上，现在再按一次就把它隐藏掉。只按按键、不切前台、不碰锁定状态；
                         // 目标程序没运行（上面 continue）或快捷键没按成（抛异常）时都不会走到这里。
+                        //
+                        // 这是切换键，按下去是“藏”还是“叫出来”取决于窗口此刻的状态，所以只在确有
+                        // 把握时才按：必须配了目标程序，而且此刻该进程的窗口确实在最前面（隐藏或
+                        // 最小化的窗口不可能是前台窗口）。宁可不按——少按一次只是窗口留在桌面上，
+                        // 按错一次却会把窗口重新叫出来，看起来像没锁。
                         // 隐藏失败不能算整个锁定失败，所以单独 catch。
-                        try
+                        if (pids == null)
                         {
-                            ShortcutSendResult hideResult = SendShortcut(mapping.PreShortcut);
                             if (info != null)
-                            {
-                                info("Lock shortcut window hidden: " + mapping.PreShortcut + note + targetText +
-                                    " | method=" + hideResult.Method +
-                                    " | InputEvents=" + hideResult.SentInputs + "/" + hideResult.RequestedInputs);
-                            }
+                                info("Lock shortcut hide skipped: no target process, cannot tell whether the window is in front | pre=" + mapping.PreShortcut + note);
                         }
-                        catch (Exception hideEx)
+                        else if (!LockShortcutTarget.IsFrontMost(pids))
                         {
-                            if (warn != null) warn("Lock shortcut hide failed: " + mapping.PreShortcut + note + targetText + " | " + hideEx.Message);
+                            if (warn != null)
+                                warn("Lock shortcut hide skipped: " + target + " is not front-most after " + mapping.Shortcut + "; not pressing " + mapping.PreShortcut + note);
+                        }
+                        else
+                        {
+                            try
+                            {
+                                ShortcutSendResult hideResult = SendShortcut(mapping.PreShortcut);
+                                if (info != null)
+                                {
+                                    info("Lock shortcut window hidden: " + mapping.PreShortcut + note + targetText +
+                                        " | method=" + hideResult.Method +
+                                        " | InputEvents=" + hideResult.SentInputs + "/" + hideResult.RequestedInputs);
+                                }
+                            }
+                            catch (Exception hideEx)
+                            {
+                                if (warn != null) warn("Lock shortcut hide failed: " + mapping.PreShortcut + note + targetText + " | " + hideEx.Message);
+                            }
                         }
                     }
                 }
