@@ -368,6 +368,8 @@ namespace BluetoothAutoLock.Tests
                 "按完隐藏键要确认窗口真的藏起来了再算成功");
             Assert(runner.Contains("HideMainWindowDirectly(pids, out directHidden)"),
                 "程序的热键没效果时（168 实测 QQ）要能直接 SW_HIDE 兜底，不能按完就当藏好了");
+            Assert(runner.Contains("AnyWindowVisible(pids)"),
+                "判断“藏住了没有”要用重新枚举，不看缓存句柄：程序可能重建窗口或还留着聊天窗");
             Assert(runner.Contains("bool hideAfterwards"), "快捷键执行器应接受“锁完隐藏窗口”开关");
             Assert(runner.Contains("hideAfterwards && !string.IsNullOrWhiteSpace(mapping.PreShortcut)"),
                 "只对填了前置快捷键的行再按一次隐藏键");

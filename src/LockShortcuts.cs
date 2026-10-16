@@ -704,18 +704,19 @@ namespace BluetoothAutoLock
                             {
                                 ShortcutSendResult hideResult = SendShortcut(mapping.PreShortcut);
 
-                                // 判断 1：热键自己把窗口藏起来了吗？
+                                // 判断 1：热键自己把窗口藏起来了吗（主窗口藏了、也没有别的可见窗口剩下）？
                                 int hiddenAfter = LockShortcutTarget.WaitForHiddenMainWindow(pids, HideConfirmMilliseconds);
                                 string hideVia;
-                                if (hiddenAfter >= 0)
+                                if (hiddenAfter >= 0 && !LockShortcutTarget.AnyWindowVisible(pids))
                                 {
                                     hideVia = "pre-hotkey@" + hiddenAfter + "ms";
                                 }
                                 else
                                 {
-                                    // 判断 2：热键没生效（QQ 实测）——不靠它了，直接把主窗口藏掉。
+                                    // 判断 2：热键没生效（QQ 实测）或还留着别的窗口——不靠它了，直接全藏掉。
                                     bool directHidden;
-                                    hideVia = LockShortcutTarget.HideMainWindowDirectly(pids, out directHidden) + " (pre-hotkey had no effect)";
+                                    string why = hiddenAfter >= 0 ? "leftover window(s) after pre-hotkey" : "pre-hotkey had no effect";
+                                    hideVia = LockShortcutTarget.HideMainWindowDirectly(pids, out directHidden) + " (" + why + ")";
                                     if (!directHidden && warn != null)
                                         warn("Lock shortcut window still visible after SW_HIDE: " + target + " | " + hideVia);
                                 }
@@ -983,29 +984,52 @@ namespace BluetoothAutoLock
             return window != null && window.Visible;
         }
 
-        // 不靠程序的全局热键，直接把主窗口 SW_HIDE 掉。返回日志用的说明，hidden 表示最后确认藏住了。
+        // 目标进程还有没有“看得见”的顶层窗口：判定口径和 DescribeVisibleWindows 完全一致
+        // （重新枚举，不看缓存句柄——句柄可能被程序重建，程序也可能同时开着主面板和聊天窗）。
+        public static bool AnyWindowVisible(HashSet<uint> pids)
+        {
+            if (pids == null || pids.Count == 0) return false;
+            foreach (TargetWindowCandidate window in CollectWindows(pids))
+            {
+                if (window == null || !window.Visible || window.Iconic) continue;
+                if (string.IsNullOrEmpty(window.Title)) continue;
+                return true;
+            }
+            return false;
+        }
+
+        // 不靠程序的全局热键，直接把目标的可见窗口全部 SW_HIDE 掉。返回日志用的说明，
+        // hidden 表示最后（用重新枚举判定，不看刚才那个句柄）确实一个可见窗口都不剩了。
         public static string HideMainWindowDirectly(HashSet<uint> pids, out bool hidden)
         {
             hidden = false;
-            TargetWindowCandidate window = FindMainWindow(pids);
-            if (window == null || window.Handle == IntPtr.Zero)
+            string titles = " " + DescribeVisibleWindows(pids);
+            for (int attempt = 1; attempt <= 5; attempt++)
             {
-                hidden = true;
-                return "SW_HIDE(no main window)";
-            }
+                bool hidSomething = false;
+                foreach (TargetWindowCandidate window in CollectWindows(pids))
+                {
+                    if (window == null || !window.Visible || window.Handle == IntPtr.Zero) continue;
+                    NativeMethods.ShowWindow(window.Handle, NativeMethods.SW_HIDE);
+                    hidSomething = true;
+                }
 
-            NativeMethods.ShowWindow(window.Handle, NativeMethods.SW_HIDE);
-            Stopwatch watch = Stopwatch.StartNew();
-            while (watch.ElapsedMilliseconds < 1000)
-            {
-                Thread.Sleep(100);
-                if (!NativeMethods.IsWindowVisible(window.Handle))
+                if (!hidSomething && !AnyWindowVisible(pids))
                 {
                     hidden = true;
-                    break;
+                    return "SW_HIDE(ok" + titles + ")";
+                }
+
+                Thread.Sleep(200);
+                if (!AnyWindowVisible(pids))
+                {
+                    hidden = true;
+                    return "SW_HIDE(ok" + titles + ", " + attempt + " attempt(s))";
                 }
             }
-            return "SW_HIDE(" + (hidden ? "ok" : "still visible") + " '" + window.Title + "')";
+
+            hidden = !AnyWindowVisible(pids);
+            return "SW_HIDE(" + (hidden ? "ok" : "still visible") + titles + ")";
         }
 
         // 目标进程此刻“看得见”的顶层窗口清单：数量 + 最多 3 个“标题/类名”。只进日志当证据用。
