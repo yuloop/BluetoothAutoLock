@@ -75,6 +75,7 @@ cd D:\xiangmudata\win_bluetooth_auto_scan_lock_on_disconnect
 | **轮询随机下限** | 最小轮询间隔，实际间隔为该值到 +7 秒随机，默认 8 即 8–15 秒 |
 | **手机离开后** | 两个独立开关：**锁定 Windows 屏幕**、**执行锁屏快捷键**（如锁定微信/QQ），可以只开一个，也可以都开 |
 | **锁屏快捷键** | 手机离开后按顺序执行。每行可设前置快捷键（如 `Ctrl+Alt+W` 叫出微信）、快捷键（如 `Ctrl+L`）、目标程序（按住 ⊕ 拖到程序窗口上）和备注；选中一行可修改。点进快捷键框（变浅黄）录制时，会先拦下其他程序的同名全局快捷键 |
+| **锁完隐藏窗口** | 勾上后，每行锁完会再按一次该行的前置快捷键（= 该程序显示/隐藏主窗口的全局热键，如微信 `Ctrl+Alt+W`、QQ `Ctrl+Alt+Shift+Q`），把刚锁上的窗口收起来；只对填了前置快捷键的行生效 |
 | **日志级别** | `Debug` / `Info` / `Warn` / `Error` |
 | **日志路径** | 日志文件位置，父目录自动创建 |
 | **LoL 游戏优化** | 可选：检测到 LoL 启动时，游戏前一次性回收 WSL 缓存、可选禁用虚拟显示器、可选关闭 AskLink / ToDesk，游戏静默 10 分钟后静默恢复 |
@@ -108,6 +109,7 @@ cd D:\xiangmudata\win_bluetooth_auto_scan_lock_on_disconnect
 | `LockShortcutsEnabled` | `true` | 手机离开后执行锁屏快捷键；不锁屏时只执行一次，等键鼠有真实输入后才重新监控 |
 | `LockShortcutPreDelayMilliseconds` | `1000` | 按完前置快捷键后，等多久再按快捷键 0–10000 |
 | `LockShortcutSettleMilliseconds` | `3000` | 同时开启锁屏时，按完快捷键等多久再锁屏 0–10000 |
+| `LockShortcutHideAfterwards` | `false` | 锁完每一行后，再按一次该行的前置快捷键，把刚锁上的窗口隐藏起来（前置键=该程序显示/隐藏窗口的全局热键）；只对填了前置快捷键的行生效 |
 | `LockShortcut1` 等 | _(空)_ | 格式 `前置>快捷键\|备注\|target=程序名`（前置和目标可省略），例如 `Ctrl+Alt+W>Ctrl+L\|锁定微信\|target=Weixin`。目标已在最前面就只按快捷键；否则先按前置快捷键，再把目标窗口还原、切到最前面后按快捷键，切不过去也照样全局按；目标没运行就跳过 |
 | `LolOptimizerEnabled` | `false` | 启用 LoL 游戏模式自动化 |
 | `LolProcessName` | `League of Legends` | LoL 进程名（不含 .exe） |

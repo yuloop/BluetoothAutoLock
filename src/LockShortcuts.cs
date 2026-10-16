@@ -546,17 +546,17 @@ namespace BluetoothAutoLock
         public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn)
         {
             bool userInputSeen;
-            return TriggerAll(mappings, preDelayMilliseconds, info, warn, out userInputSeen);
+            return TriggerAll(mappings, preDelayMilliseconds, false, info, warn, out userInputSeen);
         }
 
-        public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn, out bool userInputSeen)
+        public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, bool hideAfterwards, Action<string> info, Action<string> warn, out bool userInputSeen)
         {
             var detector = new RealInputDetector();
             int sent;
             try
             {
                 if (!detector.Watching && warn != null) warn("Real keyboard/mouse input detector could not start; only input after the shortcuts can cancel the workstation lock.");
-                sent = TriggerAllCore(mappings, preDelayMilliseconds, info, warn);
+                sent = TriggerAllCore(mappings, preDelayMilliseconds, hideAfterwards, info, warn);
                 Thread.Sleep(100);
             }
             finally
@@ -567,7 +567,7 @@ namespace BluetoothAutoLock
             return sent;
         }
 
-        private static int TriggerAllCore(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn)
+        private static int TriggerAllCore(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, bool hideAfterwards, Action<string> info, Action<string> warn)
         {
             if (mappings == null) return 0;
 
@@ -620,6 +620,29 @@ namespace BluetoothAutoLock
                             " | lastError=" + result.LastWin32Error);
                     }
                     Thread.Sleep(300);
+
+                    if (hideAfterwards && !string.IsNullOrWhiteSpace(mapping.PreShortcut))
+                    {
+                        // 锁完再把窗口收起来：这一行的前置快捷键本身就是该程序“显示/隐藏主窗口”
+                        // 的全局热键（微信 Ctrl+Alt+W、QQ Ctrl+Alt+Shift+Q）。刚才按它是把窗口叫出来
+                        // 锁上，现在再按一次就把它隐藏掉。只按按键、不切前台、不碰锁定状态；
+                        // 目标程序没运行（上面 continue）或快捷键没按成（抛异常）时都不会走到这里。
+                        // 隐藏失败不能算整个锁定失败，所以单独 catch。
+                        try
+                        {
+                            ShortcutSendResult hideResult = SendShortcut(mapping.PreShortcut);
+                            if (info != null)
+                            {
+                                info("Lock shortcut window hidden: " + mapping.PreShortcut + note + targetText +
+                                    " | method=" + hideResult.Method +
+                                    " | InputEvents=" + hideResult.SentInputs + "/" + hideResult.RequestedInputs);
+                            }
+                        }
+                        catch (Exception hideEx)
+                        {
+                            if (warn != null) warn("Lock shortcut hide failed: " + mapping.PreShortcut + note + targetText + " | " + hideEx.Message);
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {

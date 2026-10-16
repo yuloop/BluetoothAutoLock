@@ -688,6 +688,7 @@ namespace BluetoothAutoLock
             return LockShortcutRunner.TriggerAll(
                 _cfg.LockShortcutMappings,
                 _cfg.LockShortcutPreDelayMilliseconds,
+                _cfg.LockShortcutHideAfterwards,
                 msg => _log.Info(msg),
                 msg => _log.Warn(msg),
                 out userInputSeen);

@@ -23,6 +23,10 @@ namespace BluetoothAutoLock
         public bool LockShortcutsEnabled { get; set; }
         public int LockShortcutPreDelayMilliseconds { get; set; }
 
+        // 锁完每一行后，再按一次该行的前置快捷键（= 该程序自己的“显示/隐藏窗口”全局热键），
+        // 把刚锁上的窗口收起来。默认关闭。
+        public bool LockShortcutHideAfterwards { get; set; }
+
         // === LoL 启动/退出 → 游戏性能自动优化（可选） ===
         public bool LolOptimizerEnabled { get; set; }
         public string LolProcessName { get; set; }
@@ -77,6 +81,7 @@ namespace BluetoothAutoLock
                 LockScreenEnabled = true,
                 LockShortcutsEnabled = true,
                 LockShortcutPreDelayMilliseconds = 1000,
+                LockShortcutHideAfterwards = false,
 
                 LolOptimizerEnabled = false,
                 LolProcessName = "League of Legends",
@@ -260,6 +265,7 @@ namespace BluetoothAutoLock
                     if (int.TryParse(value, out intVal)) cfg.LockShortcutPreDelayMilliseconds = intVal;
                     else if (warn != null) warn("Warn", path + ":" + lineNo + " invalid integer for LockShortcutPreDelayMilliseconds: " + value);
                     break;
+                case "LockShortcutHideAfterwards": cfg.LockShortcutHideAfterwards = ParseBoolValue(value); break;
                 case "LolOptimizerEnabled": cfg.LolOptimizerEnabled = ParseBoolValue(value); break;
                 case "LolProcessName": cfg.LolProcessName = value; break;
                 case "VirtualDisplayDeviceId": cfg.VirtualDisplayDeviceId = value; break;
@@ -340,7 +346,7 @@ namespace BluetoothAutoLock
         public string Describe()
         {
             return string.Format(
-                "Config(loadedFrom={0}, DeviceName='{1}', DeviceAddress='{2}', IdleBeforeBluetoothCheck=30s, BluetoothAbsenceBeforeLock={3}s, FinalRecheckAttempts={4}, Polling=random {5}-{13}s, LogPath={6}, LogLevel={7}, MaxLogSizeMB={8}, LolOpt={9}, LolProc='{10}', VDId='{11}', LolPoll={12}s, WslCacheReclaim={14}, WslDistro='{15}', RemoteClose={16}, RemoteQuiet={17}m, GameMonitor={18}, GameMonitorInterval={19}m, GameAi={20}, GameAiModel='{21}', GameAiKey={22}, ToolZombieCount={23}, ToolZombieMemMB={24}, LolRenderThreshold={25}, LockShortcuts={26}, LockShortcutSettleMs={27}, LockScreen={28}, LockShortcutsEnabled={29}, LockShortcutPreDelayMs={30}, PresenceReport={31}(url={32}, interval={33}s, timeout={34}s, token={35}))",
+                "Config(loadedFrom={0}, DeviceName='{1}', DeviceAddress='{2}', IdleBeforeBluetoothCheck=30s, BluetoothAbsenceBeforeLock={3}s, FinalRecheckAttempts={4}, Polling=random {5}-{13}s, LogPath={6}, LogLevel={7}, MaxLogSizeMB={8}, LolOpt={9}, LolProc='{10}', VDId='{11}', LolPoll={12}s, WslCacheReclaim={14}, WslDistro='{15}', RemoteClose={16}, RemoteQuiet={17}m, GameMonitor={18}, GameMonitorInterval={19}m, GameAi={20}, GameAiModel='{21}', GameAiKey={22}, ToolZombieCount={23}, ToolZombieMemMB={24}, LolRenderThreshold={25}, LockShortcuts={26}, LockShortcutSettleMs={27}, LockScreen={28}, LockShortcutsEnabled={29}, LockShortcutPreDelayMs={30}, LockShortcutHideAfterwards={36}, PresenceReport={31}(url={32}, interval={33}s, timeout={34}s, token={35}))",
                 LoadedFrom, DeviceName, DeviceAddress, DisconnectDelaySeconds, DisconnectConfirmSeconds, PollingIntervalSeconds, LogPath, LogLevel, MaxLogSizeMB,
                 LolOptimizerEnabled, LolProcessName, VirtualDisplayDeviceId, LolOptimizerPollSeconds,
                 Math.Max(1, Math.Min(60, PollingIntervalSeconds + 7)),
@@ -353,7 +359,8 @@ namespace BluetoothAutoLock
                 LockScreenEnabled, LockShortcutsEnabled, LockShortcutPreDelayMilliseconds,
                 PresenceReportEnabled ? "on" : "off", PresenceReportUrl, PresenceReportIntervalSeconds,
                 PresenceReportTimeoutSeconds,
-                string.IsNullOrWhiteSpace(PresenceReportToken) ? "empty" : "set");
+                string.IsNullOrWhiteSpace(PresenceReportToken) ? "empty" : "set",
+                LockShortcutHideAfterwards);
         }
 
         public static string Save(Config cfg)
@@ -376,6 +383,7 @@ namespace BluetoothAutoLock
                 { "LockScreenEnabled", cfg.LockScreenEnabled ? "true" : "false" },
                 { "LockShortcutsEnabled", cfg.LockShortcutsEnabled ? "true" : "false" },
                 { "LockShortcutPreDelayMilliseconds", cfg.LockShortcutPreDelayMilliseconds.ToString(CultureInfo.InvariantCulture) },
+                { "LockShortcutHideAfterwards", cfg.LockShortcutHideAfterwards ? "true" : "false" },
                 { "LolOptimizerEnabled", cfg.LolOptimizerEnabled ? "true" : "false" },
                 { "LolProcessName", cfg.LolProcessName ?? "" },
                 { "VirtualDisplayDeviceId", cfg.VirtualDisplayDeviceId ?? "" },

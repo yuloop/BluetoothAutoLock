@@ -26,6 +26,8 @@ namespace BluetoothAutoLock.Tests
                 UiShowsProgramVersion();
                 ProgramSupportsBackgroundShortcutTestCommand();
                 PreShortcutMappingRoundTrip();
+                HideAfterLockConfigRoundTrip();
+                HideAfterLockReplaysPreShortcut();
                 RejectPureModifierShortcut();
                 Console.WriteLine("通过：" + _passed + " 项");
                 return 0;
@@ -304,6 +306,62 @@ namespace BluetoothAutoLock.Tests
             Assert(LockShortcutMapping.TryParseConfigValue("Alt+Shift+P|锁定QQ|target=QQ", out mapping), "应能解析带目标程序的映射");
             AssertEqual("QQ", mapping.TargetProcess, "目标程序应保留");
             AssertEqual("Alt+Shift+P|锁定QQ|target=QQ", mapping.ToConfigValue(), "保存格式应为 快捷键|备注|target=程序名");
+            Pass();
+        }
+
+        private static void HideAfterLockConfigRoundTrip()
+        {
+            Config cfg = Config.Defaults();
+            Assert(!cfg.LockShortcutHideAfterwards, "默认不改变旧行为：锁完不隐藏窗口");
+
+            Type mappingType = RequireType("BluetoothAutoLock.LockShortcutMapping");
+            string dir = AppDomain.CurrentDomain.BaseDirectory;
+            string path = Path.Combine(dir, "config.ini");
+            cfg.LoadedFrom = path;
+            cfg.LockShortcutHideAfterwards = true;
+            SetMappings(cfg, mappingType, ParseMapping(mappingType, "Ctrl+Alt+W>Ctrl+L|锁定微信|target=Weixin"));
+
+            try
+            {
+                Config.Save(cfg);
+                string text = File.ReadAllText(path);
+                Assert(text.Contains("LockShortcutHideAfterwards=true"), "保存时应写入“锁完隐藏窗口”开关");
+
+                Config loaded = Config.Load((level, message) => { });
+                Assert(loaded.LockShortcutHideAfterwards, "读取后应恢复“锁完隐藏窗口”开关");
+                Pass();
+            }
+            finally
+            {
+                try { if (File.Exists(path)) File.Delete(path); } catch { }
+            }
+        }
+
+        private static void HideAfterLockReplaysPreShortcut()
+        {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            string root = Path.GetFullPath(Path.Combine(baseDir, "..", ".."));
+
+            string runnerPath = Path.Combine(root, "src", "LockShortcuts.cs");
+            string monitorPath = Path.Combine(root, "src", "BluetoothMonitor.cs");
+            string programPath = Path.Combine(root, "src", "Program.cs");
+            string settingsPath = Path.Combine(root, "src", "SettingsForm.cs");
+            Assert(File.Exists(runnerPath) && File.Exists(monitorPath) && File.Exists(programPath) && File.Exists(settingsPath),
+                "都应能读取相关源文件");
+
+            string runner = File.ReadAllText(runnerPath);
+            Assert(runner.Contains("bool hideAfterwards"), "快捷键执行器应接受“锁完隐藏窗口”开关");
+            Assert(runner.Contains("hideAfterwards && !string.IsNullOrWhiteSpace(mapping.PreShortcut)"),
+                "只对填了前置快捷键的行再按一次隐藏键");
+            Assert(runner.Contains("Lock shortcut window hidden: \" + mapping.PreShortcut"),
+                "隐藏窗口要单独记一行日志，方便核对按键真的发出去了");
+
+            Assert(File.ReadAllText(monitorPath).Contains("_cfg.LockShortcutHideAfterwards"),
+                "手机离开后的动作应把开关传给快捷键执行器");
+            Assert(File.ReadAllText(programPath).Contains("cfg.LockShortcutHideAfterwards"),
+                "后台测试入口（--test-lock-shortcuts）应把开关传给快捷键执行器");
+            Assert(File.ReadAllText(settingsPath).Contains("_lockShortcutHideChk"),
+                "设置窗口“锁屏快捷键”页应能开关隐藏窗口");
             Pass();
         }
 
