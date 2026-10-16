@@ -27,6 +27,24 @@ namespace BluetoothAutoLock
         // 把刚锁上的窗口收起来。默认关闭。
         public bool LockShortcutHideAfterwards { get; set; }
 
+        // 前置键按下之后，最多再等多久让目标程序自己把窗口叫到最前面（毫秒）。0=不等。
+        public int LockShortcutPreWaitTimeoutMilliseconds { get; set; }
+
+        // 按完锁定键后，至少等多久才按隐藏键（毫秒）：QQ 锁定比微信慢，按太早会锁不上。
+        public int LockShortcutHideDelayMilliseconds { get; set; }
+
+        // 把这几项打包给 LockShortcutRunner（它不依赖 Config，策略测试只编 LockShortcuts.cs）。
+        public LockShortcutOptions BuildLockShortcutOptions()
+        {
+            return new LockShortcutOptions
+            {
+                PreDelayMilliseconds = LockShortcutPreDelayMilliseconds,
+                PreWaitTimeoutMilliseconds = LockShortcutPreWaitTimeoutMilliseconds,
+                HideAfterwards = LockShortcutHideAfterwards,
+                HideDelayMilliseconds = LockShortcutHideDelayMilliseconds
+            };
+        }
+
         // === LoL 启动/退出 → 游戏性能自动优化（可选） ===
         public bool LolOptimizerEnabled { get; set; }
         public string LolProcessName { get; set; }
@@ -82,6 +100,8 @@ namespace BluetoothAutoLock
                 LockShortcutsEnabled = true,
                 LockShortcutPreDelayMilliseconds = 1000,
                 LockShortcutHideAfterwards = false,
+                LockShortcutPreWaitTimeoutMilliseconds = 2500,
+                LockShortcutHideDelayMilliseconds = 800,
 
                 LolOptimizerEnabled = false,
                 LolProcessName = "League of Legends",
@@ -180,6 +200,10 @@ namespace BluetoothAutoLock
             if (cfg.LockShortcutSettleMilliseconds > 10000) cfg.LockShortcutSettleMilliseconds = 10000;
             if (cfg.LockShortcutPreDelayMilliseconds < 0) cfg.LockShortcutPreDelayMilliseconds = 0;
             if (cfg.LockShortcutPreDelayMilliseconds > 10000) cfg.LockShortcutPreDelayMilliseconds = 10000;
+            if (cfg.LockShortcutPreWaitTimeoutMilliseconds < 0) cfg.LockShortcutPreWaitTimeoutMilliseconds = 0;
+            if (cfg.LockShortcutPreWaitTimeoutMilliseconds > 10000) cfg.LockShortcutPreWaitTimeoutMilliseconds = 10000;
+            if (cfg.LockShortcutHideDelayMilliseconds < 0) cfg.LockShortcutHideDelayMilliseconds = 0;
+            if (cfg.LockShortcutHideDelayMilliseconds > 10000) cfg.LockShortcutHideDelayMilliseconds = 10000;
 
             if (cfg.LolOptimizerPollSeconds < 1) cfg.LolOptimizerPollSeconds = 1;
             if (cfg.LolOptimizerPollSeconds > 60) cfg.LolOptimizerPollSeconds = 60;
@@ -266,6 +290,14 @@ namespace BluetoothAutoLock
                     else if (warn != null) warn("Warn", path + ":" + lineNo + " invalid integer for LockShortcutPreDelayMilliseconds: " + value);
                     break;
                 case "LockShortcutHideAfterwards": cfg.LockShortcutHideAfterwards = ParseBoolValue(value); break;
+                case "LockShortcutPreWaitTimeoutMilliseconds":
+                    if (int.TryParse(value, out intVal)) cfg.LockShortcutPreWaitTimeoutMilliseconds = intVal;
+                    else if (warn != null) warn("Warn", path + ":" + lineNo + " invalid integer for LockShortcutPreWaitTimeoutMilliseconds: " + value);
+                    break;
+                case "LockShortcutHideDelayMilliseconds":
+                    if (int.TryParse(value, out intVal)) cfg.LockShortcutHideDelayMilliseconds = intVal;
+                    else if (warn != null) warn("Warn", path + ":" + lineNo + " invalid integer for LockShortcutHideDelayMilliseconds: " + value);
+                    break;
                 case "LolOptimizerEnabled": cfg.LolOptimizerEnabled = ParseBoolValue(value); break;
                 case "LolProcessName": cfg.LolProcessName = value; break;
                 case "VirtualDisplayDeviceId": cfg.VirtualDisplayDeviceId = value; break;
@@ -346,7 +378,7 @@ namespace BluetoothAutoLock
         public string Describe()
         {
             return string.Format(
-                "Config(loadedFrom={0}, DeviceName='{1}', DeviceAddress='{2}', IdleBeforeBluetoothCheck=30s, BluetoothAbsenceBeforeLock={3}s, FinalRecheckAttempts={4}, Polling=random {5}-{13}s, LogPath={6}, LogLevel={7}, MaxLogSizeMB={8}, LolOpt={9}, LolProc='{10}', VDId='{11}', LolPoll={12}s, WslCacheReclaim={14}, WslDistro='{15}', RemoteClose={16}, RemoteQuiet={17}m, GameMonitor={18}, GameMonitorInterval={19}m, GameAi={20}, GameAiModel='{21}', GameAiKey={22}, ToolZombieCount={23}, ToolZombieMemMB={24}, LolRenderThreshold={25}, LockShortcuts={26}, LockShortcutSettleMs={27}, LockScreen={28}, LockShortcutsEnabled={29}, LockShortcutPreDelayMs={30}, LockShortcutHideAfterwards={36}, PresenceReport={31}(url={32}, interval={33}s, timeout={34}s, token={35}))",
+                "Config(loadedFrom={0}, DeviceName='{1}', DeviceAddress='{2}', IdleBeforeBluetoothCheck=30s, BluetoothAbsenceBeforeLock={3}s, FinalRecheckAttempts={4}, Polling=random {5}-{13}s, LogPath={6}, LogLevel={7}, MaxLogSizeMB={8}, LolOpt={9}, LolProc='{10}', VDId='{11}', LolPoll={12}s, WslCacheReclaim={14}, WslDistro='{15}', RemoteClose={16}, RemoteQuiet={17}m, GameMonitor={18}, GameMonitorInterval={19}m, GameAi={20}, GameAiModel='{21}', GameAiKey={22}, ToolZombieCount={23}, ToolZombieMemMB={24}, LolRenderThreshold={25}, LockShortcuts={26}, LockShortcutSettleMs={27}, LockScreen={28}, LockShortcutsEnabled={29}, LockShortcutPreDelayMs={30}, LockShortcutHideAfterwards={36}, LockShortcutPreWaitMs={37}, LockShortcutHideDelayMs={38}, PresenceReport={31}(url={32}, interval={33}s, timeout={34}s, token={35}))",
                 LoadedFrom, DeviceName, DeviceAddress, DisconnectDelaySeconds, DisconnectConfirmSeconds, PollingIntervalSeconds, LogPath, LogLevel, MaxLogSizeMB,
                 LolOptimizerEnabled, LolProcessName, VirtualDisplayDeviceId, LolOptimizerPollSeconds,
                 Math.Max(1, Math.Min(60, PollingIntervalSeconds + 7)),
@@ -360,7 +392,9 @@ namespace BluetoothAutoLock
                 PresenceReportEnabled ? "on" : "off", PresenceReportUrl, PresenceReportIntervalSeconds,
                 PresenceReportTimeoutSeconds,
                 string.IsNullOrWhiteSpace(PresenceReportToken) ? "empty" : "set",
-                LockShortcutHideAfterwards);
+                LockShortcutHideAfterwards,
+                LockShortcutPreWaitTimeoutMilliseconds,
+                LockShortcutHideDelayMilliseconds);
         }
 
         public static string Save(Config cfg)
@@ -384,6 +418,8 @@ namespace BluetoothAutoLock
                 { "LockShortcutsEnabled", cfg.LockShortcutsEnabled ? "true" : "false" },
                 { "LockShortcutPreDelayMilliseconds", cfg.LockShortcutPreDelayMilliseconds.ToString(CultureInfo.InvariantCulture) },
                 { "LockShortcutHideAfterwards", cfg.LockShortcutHideAfterwards ? "true" : "false" },
+                { "LockShortcutPreWaitTimeoutMilliseconds", cfg.LockShortcutPreWaitTimeoutMilliseconds.ToString(CultureInfo.InvariantCulture) },
+                { "LockShortcutHideDelayMilliseconds", cfg.LockShortcutHideDelayMilliseconds.ToString(CultureInfo.InvariantCulture) },
                 { "LolOptimizerEnabled", cfg.LolOptimizerEnabled ? "true" : "false" },
                 { "LolProcessName", cfg.LolProcessName ?? "" },
                 { "VirtualDisplayDeviceId", cfg.VirtualDisplayDeviceId ?? "" },

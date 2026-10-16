@@ -49,6 +49,7 @@ namespace BluetoothAutoLock
         private CheckBox _lockScreenChk;
         private CheckBox _lockAppsChk;
         private CheckBox _lockShortcutHideChk;
+        private NumericUpDown _lockShortcutHideDelayNum;
         private readonly List<LockShortcutMapping> _lockShortcutMappings = new List<LockShortcutMapping>();
         private string _capturedLockShortcut = "";
         private string _capturedPreShortcut = "";
@@ -531,12 +532,26 @@ namespace BluetoothAutoLock
             });
             y += 34;
 
+            tab.Controls.Add(new Label { Text = "隐藏前等待：", Left = left, Top = y + 4, Width = 86, Font = normalFont });
+            _lockShortcutHideDelayNum = new NumericUpDown
+            {
+                Left = left + 90,
+                Top = y,
+                Width = 90,
+                Minimum = 0,
+                Maximum = 10000,
+                Increment = 100,
+                Font = normalFont
+            };
+            tab.Controls.Add(_lockShortcutHideDelayNum);
+            tab.Controls.Add(new Label { Text = "毫秒", Left = left + 186, Top = y + 4, Width = 40, Font = normalFont });
+
             _lockShortcutHideChk = new CheckBox
             {
-                Text = "锁完再按一次前置键，把窗口隐藏起来（前置键=该程序显示/隐藏窗口的全局热键；只对填了目标程序、且窗口在最前面的行生效）",
-                Left = left,
+                Text = "锁完再按一次前置键，把窗口隐藏起来",
+                Left = left + 232,
                 Top = y + 2,
-                Width = width,
+                Width = 300,
                 AutoSize = true,
                 Font = normalFont
             };
@@ -551,7 +566,7 @@ namespace BluetoothAutoLock
                 Height = 36,
                 ForeColor = Color.DimGray,
                 Font = normalFont,
-                Text = "测试触发会按上面的顺序真的执行一遍；微信/QQ 锁上后需要用手机解锁。"
+                Text = "测试触发会按上面的顺序真的执行一遍；微信/QQ 锁上后需要用手机解锁。隐藏窗口只对填了目标程序、且当时窗口在最前面的行生效。"
             };
             tab.Controls.Add(_lockShortcutStatusLabel);
 
@@ -860,8 +875,11 @@ namespace BluetoothAutoLock
                 return;
             }
 
-            int preDelay = _lockShortcutPreDelayNum == null ? 1000 : (int)_lockShortcutPreDelayNum.Value;
-            bool hideAfterwards = _lockShortcutHideChk != null && _lockShortcutHideChk.Checked;
+            LockShortcutOptions options = new LockShortcutOptions();
+            options.PreDelayMilliseconds = _lockShortcutPreDelayNum == null ? 1000 : (int)_lockShortcutPreDelayNum.Value;
+            options.PreWaitTimeoutMilliseconds = _cfg == null ? 2500 : _cfg.LockShortcutPreWaitTimeoutMilliseconds;
+            options.HideAfterwards = _lockShortcutHideChk != null && _lockShortcutHideChk.Checked;
+            options.HideDelayMilliseconds = _lockShortcutHideDelayNum == null ? 800 : (int)_lockShortcutHideDelayNum.Value;
             _lockShortcutTestRunning = true;
             _lockShortcutTestBtn.Enabled = false;
             SetLockShortcutStatus("正在测试：按顺序按下前置快捷键和快捷键（按设置可能再按一次隐藏窗口）……", Color.FromArgb(0, 96, 160));
@@ -876,8 +894,7 @@ namespace BluetoothAutoLock
                 {
                     sent = LockShortcutRunner.TriggerAll(
                         mappings,
-                        preDelay,
-                        hideAfterwards,
+                        options,
                         message => { if (log != null) log.Info(message); },
                         message =>
                         {
@@ -1480,6 +1497,7 @@ namespace BluetoothAutoLock
             _lockShortcutPreDelayNum.Value = Clamp(_cfg.LockShortcutPreDelayMilliseconds, 0, 10000);
             _lockShortcutSettleNum.Value = Clamp(_cfg.LockShortcutSettleMilliseconds, 0, 10000);
             if (_lockShortcutHideChk != null) _lockShortcutHideChk.Checked = _cfg.LockShortcutHideAfterwards;
+            if (_lockShortcutHideDelayNum != null) _lockShortcutHideDelayNum.Value = Clamp(_cfg.LockShortcutHideDelayMilliseconds, 0, 10000);
 
             _lockShortcutMappings.Clear();
             if (_cfg.LockShortcutMappings != null)
@@ -1538,6 +1556,7 @@ namespace BluetoothAutoLock
             _cfg.LockShortcutPreDelayMilliseconds = (int)_lockShortcutPreDelayNum.Value;
             _cfg.LockShortcutSettleMilliseconds = (int)_lockShortcutSettleNum.Value;
             _cfg.LockShortcutHideAfterwards = _lockShortcutHideChk != null && _lockShortcutHideChk.Checked;
+            if (_lockShortcutHideDelayNum != null) _cfg.LockShortcutHideDelayMilliseconds = (int)_lockShortcutHideDelayNum.Value;
             _cfg.LockShortcutMappings = new List<LockShortcutMapping>();
             foreach (LockShortcutMapping mapping in _lockShortcutMappings)
             {

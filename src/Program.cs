@@ -11,7 +11,7 @@ namespace BluetoothAutoLock
         private static NativeMethods.ConsoleCtrlDelegate _ctrlHandler;
         private static Mutex _singleInstanceMutex;
 
-        public const string Version = "1.1.43";
+        public const string Version = "1.1.44";
         private const string SingleInstanceMutexName = @"Local\BluetoothAutoLock";
 
         [STAThread]
@@ -297,8 +297,7 @@ namespace BluetoothAutoLock
             bool userInputSeen;
             int sent = LockShortcutRunner.TriggerAll(
                 cfg.LockShortcutMappings,
-                cfg.LockShortcutPreDelayMilliseconds,
-                cfg.LockShortcutHideAfterwards,
+                cfg.BuildLockShortcutOptions(),
                 message => log.Info(message),
                 message => log.Warn(message),
                 out userInputSeen);

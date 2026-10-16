@@ -162,7 +162,7 @@ namespace BluetoothAutoLock.Tests
                     foregroundBeforeSend = GetForegroundWindow() == form.Handle;
                     sent = LockShortcutRunner.TriggerAll(
                         new[] { new LockShortcutMapping("Ctrl+Alt+Shift+O", "多组合测试") },
-                        0,
+                        LockShortcutOptions.Standard(0),
                         null,
                         message => { warning = message; });
                 };
@@ -226,7 +226,7 @@ namespace BluetoothAutoLock.Tests
                     sendTimer.Stop();
                     sent = LockShortcutRunner.TriggerAll(
                         new[] { new LockShortcutMapping("Ctrl+Alt+Shift+O", "全局热键测试") },
-                        0,
+                        LockShortcutOptions.Standard(0),
                         message => { info = message; },
                         message => { warning = message; });
                 };
@@ -319,6 +319,8 @@ namespace BluetoothAutoLock.Tests
             string path = Path.Combine(dir, "config.ini");
             cfg.LoadedFrom = path;
             cfg.LockShortcutHideAfterwards = true;
+            cfg.LockShortcutHideDelayMilliseconds = 1500;
+            cfg.LockShortcutPreWaitTimeoutMilliseconds = 2500;
             SetMappings(cfg, mappingType, ParseMapping(mappingType, "Ctrl+Alt+W>Ctrl+L|锁定微信|target=Weixin"));
 
             try
@@ -326,9 +328,15 @@ namespace BluetoothAutoLock.Tests
                 Config.Save(cfg);
                 string text = File.ReadAllText(path);
                 Assert(text.Contains("LockShortcutHideAfterwards=true"), "保存时应写入“锁完隐藏窗口”开关");
+                Assert(text.Contains("LockShortcutHideDelayMilliseconds=1500"), "保存时应写入隐藏前等待时间");
+                Assert(text.Contains("LockShortcutPreWaitTimeoutMilliseconds=2500"), "保存时应写入前置键后最长等待");
 
                 Config loaded = Config.Load((level, message) => { });
                 Assert(loaded.LockShortcutHideAfterwards, "读取后应恢复“锁完隐藏窗口”开关");
+                AssertEqual(1500, loaded.LockShortcutHideDelayMilliseconds, "读取后应恢复隐藏前等待时间");
+                AssertEqual(2500, loaded.LockShortcutPreWaitTimeoutMilliseconds, "读取后应恢复前置键后最长等待");
+                AssertEqual(1500, loaded.BuildLockShortcutOptions().HideDelayMilliseconds, "传给执行器的节拍参数要和配置一致");
+                Assert(loaded.BuildLockShortcutOptions().HideAfterwards, "传给执行器的开关要和配置一致");
                 Pass();
             }
             finally
@@ -350,6 +358,12 @@ namespace BluetoothAutoLock.Tests
                 "都应能读取相关源文件");
 
             string runner = File.ReadAllText(runnerPath);
+            Assert(runner.Contains("class LockShortcutOptions"), "节拍参数（前置等待、隐藏前等待）应集中在一个不依赖 Config 的类里");
+            Assert(runner.Contains("WaitForVisibleWindow(pids, preWait)"),
+                "按完前置键要等目标自己把窗口显示出来，等不到才强显（168 实测 QQ 500ms 还没显示，强显后锁定键它不认）");
+            Assert(runner.Contains("hideDelay > 300 ? hideDelay : 300"),
+                "按完锁定键要留足时间再按隐藏键，不能立刻收窗口");
+            Assert(runner.Contains("windows="), "锁定前后各记一次目标可见窗口，留证据判断到底锁上没有");
             Assert(runner.Contains("bool hideAfterwards"), "快捷键执行器应接受“锁完隐藏窗口”开关");
             Assert(runner.Contains("hideAfterwards && !string.IsNullOrWhiteSpace(mapping.PreShortcut)"),
                 "只对填了前置快捷键的行再按一次隐藏键");
@@ -364,6 +378,8 @@ namespace BluetoothAutoLock.Tests
                 "后台测试入口（--test-lock-shortcuts）应把开关传给快捷键执行器");
             Assert(File.ReadAllText(settingsPath).Contains("_lockShortcutHideChk"),
                 "设置窗口“锁屏快捷键”页应能开关隐藏窗口");
+            Assert(File.ReadAllText(settingsPath).Contains("_lockShortcutHideDelayNum"),
+                "设置窗口应能调“隐藏前等待”毫秒数");
             Pass();
         }
 

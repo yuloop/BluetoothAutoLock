@@ -687,8 +687,7 @@ namespace BluetoothAutoLock
             SetStatus("锁定微信/QQ", "正在执行 " + _cfg.LockShortcutMappings.Count + " 个锁屏快捷键" + (screenLockFollows ? "，然后锁屏" : ""));
             return LockShortcutRunner.TriggerAll(
                 _cfg.LockShortcutMappings,
-                _cfg.LockShortcutPreDelayMilliseconds,
-                _cfg.LockShortcutHideAfterwards,
+                _cfg.BuildLockShortcutOptions(),
                 msg => _log.Info(msg),
                 msg => _log.Warn(msg),
                 out userInputSeen);
