@@ -109,7 +109,7 @@ cd D:\xiangmudata\win_bluetooth_auto_scan_lock_on_disconnect
 | `LockShortcutsEnabled` | `true` | 手机离开后执行锁屏快捷键；不锁屏时只执行一次，等键鼠有真实输入后才重新监控 |
 | `LockShortcutPreDelayMilliseconds` | `1000` | 按完前置快捷键后，等多久再按快捷键 0–10000 |
 | `LockShortcutSettleMilliseconds` | `3000` | 同时开启锁屏时，按完快捷键等多久再锁屏 0–10000 |
-| `LockShortcutHideAfterwards` | `false` | 锁完每一行后，再按一次该行的前置快捷键，把刚锁上的窗口隐藏起来（前置键=该程序显示/隐藏窗口的全局热键）。只在“填了目标程序且它按完锁定键后仍在最前面”时才按，否则跳过并记日志；日志里成功的行是 `Lock shortcut window hidden:` |
+| `LockShortcutHideAfterwards` | `false` | 锁完每一行后，再按一次该行的前置快捷键（= 该程序显示/隐藏窗口的全局热键），把刚锁上的窗口隐藏起来。只在“填了目标程序且它按完锁定键后仍在最前面”时才按；按完会确认窗口真的藏住了，**热键没效果就自己 `SW_HIDE` 兜底**（168 实测 QQ 的热键既叫不出也收不起来）。日志：`Lock shortcut window hidden: … | hide=pre-hotkey@300ms` 或 `hide=SW_HIDE(ok)…(pre-hotkey had no effect)`；拿不准则 `Lock shortcut hide skipped:` |
 | `LockShortcutPreWaitTimeoutMilliseconds` | `2500` | 按完前置键后，在“前置键后等待”之外最多再等这么久，**等程序自己把窗口显示出来**（只看显示没显示，不管有没有拿到焦点）；超时才用 SW_SHOW 强显（强显后不少程序不认自己的锁定热键）。日志写 `ready=visible@Xms` 或 `ready=timeout(...)` |
 | `LockShortcutHideDelayMilliseconds` | `800` | 按完锁定键后至少等多久才按隐藏键（不隐藏时仍按 300ms 走下一行）。QQ 的锁定比微信慢，值太小会“窗口收了但没锁上” |
 | `LockShortcut1` 等 | _(空)_ | 格式 `前置>快捷键\|备注\|target=程序名`（前置和目标可省略），例如 `Ctrl+Alt+W>Ctrl+L\|锁定微信\|target=Weixin`。目标已在最前面就只按快捷键；否则先按前置快捷键，再把目标窗口还原、切到最前面后按快捷键，切不过去也照样全局按；目标没运行就跳过 |

@@ -567,6 +567,9 @@ namespace BluetoothAutoLock
 
     internal static class LockShortcutRunner
     {
+        // 按完隐藏键后，等它自己把窗口藏起来的时间；等不到就直接 SW_HIDE 兜底（QQ 的热键实测没效果）。
+        private const int HideConfirmMilliseconds = 1200;
+
         public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, LockShortcutOptions options, Action<string> info, Action<string> warn)
         {
             bool userInputSeen;
@@ -675,14 +678,14 @@ namespace BluetoothAutoLock
 
                     if (hideAfterwards && !string.IsNullOrWhiteSpace(mapping.PreShortcut))
                     {
-                        // 锁完再把窗口收起来：这一行的前置快捷键本身就是该程序“显示/隐藏主窗口”
-                        // 的全局热键（微信 Ctrl+Alt+W、QQ Ctrl+Alt+Shift+Q）。刚才按它是把窗口叫出来
-                        // 锁上，现在再按一次就把它隐藏掉。只按按键、不切前台、不碰锁定状态；
-                        // 目标程序没运行（上面 continue）或快捷键没按成（抛异常）时都不会走到这里。
+                        // 锁完再把窗口收起来：这一行的前置快捷键本该是该程序“显示/隐藏主窗口”的全局
+                        // 热键（微信 Ctrl+Alt+W 确实有效）。刚才按它是把窗口叫出来锁上，现在再按一次
+                        // 就应该把它隐藏掉。只按按键、不切前台、不碰锁定状态；目标程序没运行（上面
+                        // continue）或快捷键没按成（抛异常）时都不会走到这里。
                         //
-                        // 这是切换键，按下去是“藏”还是“叫出来”取决于窗口此刻的状态，所以只在确有
-                        // 把握时才按：必须配了目标程序，而且此刻该进程的窗口确实在最前面（隐藏或
-                        // 最小化的窗口不可能是前台窗口）。宁可不按——少按一次只是窗口留在桌面上，
+                        // 但 168 实测 QQ 的 Ctrl+Alt+Shift+Q 既叫不出窗口、也收不起来（前置键那一步
+                        // 就是超时后靠强显兜底的），所以这里不能“按完就当藏好了”：按完等一会儿，
+                        // 窗口还露着就直接 SW_HIDE 兜底。宁可不按——少按一次只是窗口留在桌面上，
                         // 按错一次却会把窗口重新叫出来，看起来像没锁。
                         // 隐藏失败不能算整个锁定失败，所以单独 catch。
                         if (pids == null)
@@ -699,15 +702,30 @@ namespace BluetoothAutoLock
                         {
                             try
                             {
-                                // 隐藏之前再看一眼目标进程的可见窗口：只是为了留证据——锁定成功与否
-                                // 没法直接问程序，但窗口有没有多出/变成锁屏窗口，看得出来。
-                                string windowsAfter = LockShortcutTarget.DescribeVisibleWindows(pids);
                                 ShortcutSendResult hideResult = SendShortcut(mapping.PreShortcut);
+
+                                // 判断 1：热键自己把窗口藏起来了吗？
+                                int hiddenAfter = LockShortcutTarget.WaitForHiddenMainWindow(pids, HideConfirmMilliseconds);
+                                string hideVia;
+                                if (hiddenAfter >= 0)
+                                {
+                                    hideVia = "pre-hotkey@" + hiddenAfter + "ms";
+                                }
+                                else
+                                {
+                                    // 判断 2：热键没生效（QQ 实测）——不靠它了，直接把主窗口藏掉。
+                                    bool directHidden;
+                                    hideVia = LockShortcutTarget.HideMainWindowDirectly(pids, out directHidden) + " (pre-hotkey had no effect)";
+                                    if (!directHidden && warn != null)
+                                        warn("Lock shortcut window still visible after SW_HIDE: " + target + " | " + hideVia);
+                                }
+
                                 if (info != null)
                                 {
                                     info("Lock shortcut window hidden: " + mapping.PreShortcut + note + targetText +
                                         " | waited=" + pauseMs + "ms" +
-                                        " | windows=" + windowsBefore + " -> " + windowsAfter +
+                                        " | hide=" + hideVia +
+                                        " | windows=" + windowsBefore + " -> " + LockShortcutTarget.DescribeVisibleWindows(pids) +
                                         " | method=" + hideResult.Method +
                                         " | InputEvents=" + hideResult.SentInputs + "/" + hideResult.RequestedInputs);
                                 }
@@ -944,6 +962,50 @@ namespace BluetoothAutoLock
             }
             while (watch.ElapsedMilliseconds < timeoutMs);
             return -1;
+        }
+
+        // 等目标主窗口自己藏起来（程序的热键生效了）。返回等到的毫秒数，超时返回 -1。
+        public static int WaitForHiddenMainWindow(HashSet<uint> pids, int timeoutMs)
+        {
+            Stopwatch watch = Stopwatch.StartNew();
+            do
+            {
+                if (!IsMainWindowVisible(pids)) return (int)watch.ElapsedMilliseconds;
+                Thread.Sleep(100);
+            }
+            while (watch.ElapsedMilliseconds < timeoutMs);
+            return IsMainWindowVisible(pids) ? -1 : (int)watch.ElapsedMilliseconds;
+        }
+
+        public static bool IsMainWindowVisible(HashSet<uint> pids)
+        {
+            TargetWindowCandidate window = FindMainWindow(pids);
+            return window != null && window.Visible;
+        }
+
+        // 不靠程序的全局热键，直接把主窗口 SW_HIDE 掉。返回日志用的说明，hidden 表示最后确认藏住了。
+        public static string HideMainWindowDirectly(HashSet<uint> pids, out bool hidden)
+        {
+            hidden = false;
+            TargetWindowCandidate window = FindMainWindow(pids);
+            if (window == null || window.Handle == IntPtr.Zero)
+            {
+                hidden = true;
+                return "SW_HIDE(no main window)";
+            }
+
+            NativeMethods.ShowWindow(window.Handle, NativeMethods.SW_HIDE);
+            Stopwatch watch = Stopwatch.StartNew();
+            while (watch.ElapsedMilliseconds < 1000)
+            {
+                Thread.Sleep(100);
+                if (!NativeMethods.IsWindowVisible(window.Handle))
+                {
+                    hidden = true;
+                    break;
+                }
+            }
+            return "SW_HIDE(" + (hidden ? "ok" : "still visible") + " '" + window.Title + "')";
         }
 
         // 目标进程此刻“看得见”的顶层窗口清单：数量 + 最多 3 个“标题/类名”。只进日志当证据用。
