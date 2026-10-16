@@ -50,6 +50,13 @@ namespace BluetoothAutoLock
         public string GameOptimizerToolCleanupProcessNames { get; set; }
         public string GameOptimizerLolCleanupProcessNames { get; set; }
 
+        // === 在岗上报（Presence reporting，可选） ===
+        public bool PresenceReportEnabled { get; set; }
+        public string PresenceReportUrl { get; set; }
+        public string PresenceReportToken { get; set; }
+        public int PresenceReportIntervalSeconds { get; set; }
+        public int PresenceReportTimeoutSeconds { get; set; }
+
         public static Config Defaults()
         {
             return new Config
@@ -94,7 +101,13 @@ namespace BluetoothAutoLock
                 GameOptimizerToolZombieMemoryMB = 2048,
                 GameOptimizerLolRenderCountThreshold = 2,
                 GameOptimizerToolCleanupProcessNames = "node,omx-node-stdio-hidden,python",
-                GameOptimizerLolCleanupProcessNames = "LeagueCrashHandler64,LeagueClientUxRender,LeagueClient,League of Legends,RiotClientServices"
+                GameOptimizerLolCleanupProcessNames = "LeagueCrashHandler64,LeagueClientUxRender,LeagueClient,League of Legends,RiotClientServices",
+
+                PresenceReportEnabled = false,
+                PresenceReportUrl = "https://sl.z123j.top:26132/btlock/report",
+                PresenceReportToken = "",
+                PresenceReportIntervalSeconds = 20,
+                PresenceReportTimeoutSeconds = 5
             };
         }
 
@@ -187,6 +200,12 @@ namespace BluetoothAutoLock
             if (cfg.GameOptimizerLolRenderCountThreshold > 20) cfg.GameOptimizerLolRenderCountThreshold = 20;
             if (string.IsNullOrWhiteSpace(cfg.GameOptimizerToolCleanupProcessNames)) cfg.GameOptimizerToolCleanupProcessNames = "node,omx-node-stdio-hidden,python";
             if (string.IsNullOrWhiteSpace(cfg.GameOptimizerLolCleanupProcessNames)) cfg.GameOptimizerLolCleanupProcessNames = "LeagueCrashHandler64,LeagueClientUxRender,LeagueClient,League of Legends,RiotClientServices";
+
+            if (string.IsNullOrWhiteSpace(cfg.PresenceReportUrl)) cfg.PresenceReportUrl = "https://sl.z123j.top:26132/btlock/report";
+            if (cfg.PresenceReportIntervalSeconds < 5) cfg.PresenceReportIntervalSeconds = 5;
+            if (cfg.PresenceReportIntervalSeconds > 3600) cfg.PresenceReportIntervalSeconds = 3600;
+            if (cfg.PresenceReportTimeoutSeconds < 1) cfg.PresenceReportTimeoutSeconds = 1;
+            if (cfg.PresenceReportTimeoutSeconds > 60) cfg.PresenceReportTimeoutSeconds = 60;
         }
 
         private static bool ParseBoolValue(string value)
@@ -288,6 +307,17 @@ namespace BluetoothAutoLock
                     break;
                 case "GameOptimizerToolCleanupProcessNames": cfg.GameOptimizerToolCleanupProcessNames = value; break;
                 case "GameOptimizerLolCleanupProcessNames": cfg.GameOptimizerLolCleanupProcessNames = value; break;
+                case "PresenceReportEnabled": cfg.PresenceReportEnabled = ParseBoolValue(value); break;
+                case "PresenceReportUrl": cfg.PresenceReportUrl = value; break;
+                case "PresenceReportToken": cfg.PresenceReportToken = value; break;
+                case "PresenceReportIntervalSeconds":
+                    if (int.TryParse(value, out intVal)) cfg.PresenceReportIntervalSeconds = intVal;
+                    else if (warn != null) warn("Warn", path + ":" + lineNo + " invalid integer for PresenceReportIntervalSeconds: " + value);
+                    break;
+                case "PresenceReportTimeoutSeconds":
+                    if (int.TryParse(value, out intVal)) cfg.PresenceReportTimeoutSeconds = intVal;
+                    else if (warn != null) warn("Warn", path + ":" + lineNo + " invalid integer for PresenceReportTimeoutSeconds: " + value);
+                    break;
                 // 兼容旧版本字段（当前已废弃，仅吃掉避免警告）
                 case "LolPriority":
                 case "LolAffinityMask":
@@ -310,7 +340,7 @@ namespace BluetoothAutoLock
         public string Describe()
         {
             return string.Format(
-                "Config(loadedFrom={0}, DeviceName='{1}', DeviceAddress='{2}', IdleBeforeBluetoothCheck=30s, BluetoothAbsenceBeforeLock={3}s, FinalRecheckAttempts={4}, Polling=random {5}-{13}s, LogPath={6}, LogLevel={7}, MaxLogSizeMB={8}, LolOpt={9}, LolProc='{10}', VDId='{11}', LolPoll={12}s, WslCacheReclaim={14}, WslDistro='{15}', RemoteClose={16}, RemoteQuiet={17}m, GameMonitor={18}, GameMonitorInterval={19}m, GameAi={20}, GameAiModel='{21}', GameAiKey={22}, ToolZombieCount={23}, ToolZombieMemMB={24}, LolRenderThreshold={25}, LockShortcuts={26}, LockShortcutSettleMs={27}, LockScreen={28}, LockShortcutsEnabled={29}, LockShortcutPreDelayMs={30})",
+                "Config(loadedFrom={0}, DeviceName='{1}', DeviceAddress='{2}', IdleBeforeBluetoothCheck=30s, BluetoothAbsenceBeforeLock={3}s, FinalRecheckAttempts={4}, Polling=random {5}-{13}s, LogPath={6}, LogLevel={7}, MaxLogSizeMB={8}, LolOpt={9}, LolProc='{10}', VDId='{11}', LolPoll={12}s, WslCacheReclaim={14}, WslDistro='{15}', RemoteClose={16}, RemoteQuiet={17}m, GameMonitor={18}, GameMonitorInterval={19}m, GameAi={20}, GameAiModel='{21}', GameAiKey={22}, ToolZombieCount={23}, ToolZombieMemMB={24}, LolRenderThreshold={25}, LockShortcuts={26}, LockShortcutSettleMs={27}, LockScreen={28}, LockShortcutsEnabled={29}, LockShortcutPreDelayMs={30}, PresenceReport={31}(url={32}, interval={33}s, timeout={34}s, token={35}))",
                 LoadedFrom, DeviceName, DeviceAddress, DisconnectDelaySeconds, DisconnectConfirmSeconds, PollingIntervalSeconds, LogPath, LogLevel, MaxLogSizeMB,
                 LolOptimizerEnabled, LolProcessName, VirtualDisplayDeviceId, LolOptimizerPollSeconds,
                 Math.Max(1, Math.Min(60, PollingIntervalSeconds + 7)),
@@ -320,7 +350,10 @@ namespace BluetoothAutoLock
                 GameOptimizerToolZombieCountThreshold, GameOptimizerToolZombieMemoryMB, GameOptimizerLolRenderCountThreshold,
                 LockShortcutMappings == null ? 0 : LockShortcutMappings.Count,
                 LockShortcutSettleMilliseconds,
-                LockScreenEnabled, LockShortcutsEnabled, LockShortcutPreDelayMilliseconds);
+                LockScreenEnabled, LockShortcutsEnabled, LockShortcutPreDelayMilliseconds,
+                PresenceReportEnabled ? "on" : "off", PresenceReportUrl, PresenceReportIntervalSeconds,
+                PresenceReportTimeoutSeconds,
+                string.IsNullOrWhiteSpace(PresenceReportToken) ? "empty" : "set");
         }
 
         public static string Save(Config cfg)
@@ -366,6 +399,12 @@ namespace BluetoothAutoLock
                 { "GameOptimizerLolRenderCountThreshold", cfg.GameOptimizerLolRenderCountThreshold.ToString(CultureInfo.InvariantCulture) },
                 { "GameOptimizerToolCleanupProcessNames", cfg.GameOptimizerToolCleanupProcessNames ?? "" },
                 { "GameOptimizerLolCleanupProcessNames", cfg.GameOptimizerLolCleanupProcessNames ?? "" },
+                // 注意：token 必须原样回写，不能像 AI key 那样清空，否则每次保存设置都会丢掉用户填的 token。
+                { "PresenceReportEnabled", cfg.PresenceReportEnabled ? "true" : "false" },
+                { "PresenceReportUrl", cfg.PresenceReportUrl ?? "" },
+                { "PresenceReportToken", cfg.PresenceReportToken ?? "" },
+                { "PresenceReportIntervalSeconds", cfg.PresenceReportIntervalSeconds.ToString(CultureInfo.InvariantCulture) },
+                { "PresenceReportTimeoutSeconds", cfg.PresenceReportTimeoutSeconds.ToString(CultureInfo.InvariantCulture) },
             };
 
             var seen = new HashSet<string>(StringComparer.Ordinal);

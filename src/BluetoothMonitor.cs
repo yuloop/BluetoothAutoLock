@@ -88,6 +88,7 @@ namespace BluetoothAutoLock
         private readonly Logger _log;
         private readonly Func<bool> _shouldStop;
         private readonly Random _pollRandom = new Random();
+        private readonly PresenceReporter _presenceReporter;
 
         private bool _wasConnected;
         private DateTime? _missingSince;
@@ -108,6 +109,7 @@ namespace BluetoothAutoLock
             _cfg = cfg;
             _log = log;
             _shouldStop = shouldStop ?? (() => false);
+            _presenceReporter = new PresenceReporter(cfg, log);
             SetStatus("初始化中", "等待首次扫描");
         }
 
@@ -269,6 +271,11 @@ namespace BluetoothAutoLock
                 " | Polling=random " + pollMinSeconds + "-" + pollMaxSeconds + "s" +
                 " | LeaveActions: lockScreen=" + _cfg.LockScreenEnabled + ", lockWeChatQQ=" + LockAppsEnabled());
 
+            // 先把此刻状态喂进去，再启动上报线程：这样第一份 start 报告就带真实初值
+            // （空闲秒数等），而不是一份空快照。
+            ReportPresence();
+            _presenceReporter.Start();
+
             while (!_shouldStop())
             {
                 _wakeRequested = false;
@@ -281,6 +288,8 @@ namespace BluetoothAutoLock
                     _log.Error("Tick failed: " + ex.GetType().Name + ": " + ex.Message);
                 }
 
+                ReportPresence();
+
                 int pollMs = NextPollDelayMs();
                 int elapsed = 0;
                 while (elapsed < pollMs && !_shouldStop() && !_wakeRequested)
@@ -291,7 +300,50 @@ namespace BluetoothAutoLock
                 }
             }
 
+            _presenceReporter.Stop();
             _log.Info("Monitor stopped.");
+        }
+
+        // 把监控线程此刻的真实状态喂给 PresenceReporter（在岗上报）。
+        // 只读本类已有的字段，不新增第二套“在场/离开”判断，也绝不做网络请求：
+        // 真正的 HTTP POST 由 PresenceReporter 自己的后台线程负责，这里只做状态搬运。
+        private void ReportPresence()
+        {
+            try
+            {
+                bool inRange = _wasConnected;
+
+                int absentSeconds = 0;
+                if (_missingSince.HasValue)
+                {
+                    double missingFor = (DateTime.UtcNow - _missingSince.Value).TotalSeconds;
+                    if (missingFor > 0) absentSeconds = (int)missingFor;
+                }
+
+                bool paused = _appLockDeferred || _lockLifecycle.IsLockedUntilSessionUnlock;
+
+                int? idleSeconds = null;
+                int idle = NativeMethods.GetIdleSeconds();
+                if (idle >= 0 && idle != int.MaxValue) idleSeconds = idle;
+
+                _presenceReporter.Report(inRange, idleSeconds, absentSeconds,
+                    ComputePresenceState(inRange, absentSeconds, paused), paused);
+            }
+            catch (Exception ex)
+            {
+                _log.Debug("Presence report skipped: " + ex.GetType().Name + ": " + ex.Message);
+            }
+        }
+
+        // state 用短小写字符串（present / away / unknown），沿用本类已有的判定：
+        //   present = 最近一次高可信 SDP 判定目标在旁边（_wasConnected）；
+        //   away    = 已判定不在旁边（_missingSince 正在计时，或已按离开处理/离开动作延后中）；
+        //   unknown = 还没得出判定（键鼠空闲未满 30s、未配置地址、离开动作全关、探测结果不确定）。
+        private static string ComputePresenceState(bool inRange, int absentSeconds, bool paused)
+        {
+            if (inRange) return "present";
+            if (absentSeconds > 0 || paused) return "away";
+            return "unknown";
         }
 
         private void Tick(DateTime nowUtc)
