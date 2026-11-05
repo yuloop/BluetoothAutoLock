@@ -312,15 +312,28 @@ namespace BluetoothAutoLock.Tests
         private static void ShortcutRunnerChecksFrontBeforePreShortcut()
         {
             string source = ReadSource("LockShortcuts.cs");
-            string body = ExtractMethodBody(source, "private static int TriggerAllCore(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn)");
+            string body = ExtractMethodBody(source, "private static int TriggerAllCore(IEnumerable<LockShortcutMapping> mappings, LockShortcutOptions options, Action<string> info, Action<string> warn)");
             int front = body.IndexOf("LockShortcutTarget.IsFrontMost(pids)", StringComparison.Ordinal);
             int pre = body.IndexOf("SendShortcut(mapping.PreShortcut)", StringComparison.Ordinal);
             int bring = body.IndexOf("LockShortcutTarget.BringToFront(pids)", StringComparison.Ordinal);
             int main = body.IndexOf("SendShortcut(mapping.Shortcut)", StringComparison.Ordinal);
             Assert(front >= 0 && pre > front && bring > pre && main > bring,
                 "应先判断目标是否已在最前面，再按前置快捷键，再把目标切到最前面，最后按快捷键");
+            int hide = body.IndexOf("SendShortcut(mapping.PreShortcut)", main, StringComparison.Ordinal);
+            Assert(hide > main, "锁完窗口后才再按一次前置键，把刚锁上的窗口隐藏起来");
+            int hideGuard = body.IndexOf("LockShortcutTarget.IsFrontMost(pids)", main, StringComparison.Ordinal);
+            Assert(hideGuard > main && hideGuard < hide,
+                "前置键是切换键：只有确认目标窗口此刻确实在最前面，才敢按它隐藏窗口");
+            int pause = body.IndexOf("int pauseMs =", StringComparison.Ordinal);
+            Assert(pause > main && pause < hide, "锁定键之后要先留等待时间（QQ 锁定慢），再去按隐藏键");
+            int hideConfirm = body.IndexOf("WaitForHiddenMainWindow(pids, HideConfirmMilliseconds)", StringComparison.Ordinal);
+            int hideFallback = body.IndexOf("HideMainWindowDirectly(pids, out directHidden)", StringComparison.Ordinal);
+            Assert(hideConfirm > hide && hideFallback > hideConfirm,
+                "按完隐藏键要先确认热键有没有把窗口藏起来，没藏住再 SW_HIDE 兜底");
             int refresh = body.IndexOf("pids = LockShortcutTarget.FindProcessIds(target)", pre, StringComparison.Ordinal);
             Assert(refresh > pre && refresh < bring, "按完前置快捷键后要重新查目标进程，前置键可能拉起新进程");
+            int waitReady = body.IndexOf("LockShortcutTarget.WaitForVisibleWindow(pids, preWait)", StringComparison.Ordinal);
+            Assert(waitReady > refresh && waitReady < bring, "前置键之后要等它自己把窗口显示出来，等不到才强显（强显后很多程序不认自己的锁定热键）");
             int notRunning = body.IndexOf("is not running", StringComparison.Ordinal);
             Assert(notRunning > pre, "目标没运行时也要先按前置快捷键，按完还没运行才跳过");
             Pass();
@@ -370,7 +383,7 @@ namespace BluetoothAutoLock.Tests
             Assert(mouse.Contains("(data.flags & NativeMethods.LLMHF_INJECTED) == 0"), "只把没有“模拟”标记的鼠标输入算作用户回来");
             Assert(keyboard.Contains("return NativeMethods.CallNextHookEx(") && !keyboard.Contains("new IntPtr(1)"), "检测钩子只看不拦，键盘输入必须照常传下去");
             Assert(mouse.Contains("return NativeMethods.CallNextHookEx(") && !mouse.Contains("new IntPtr(1)"), "检测钩子只看不拦，鼠标输入必须照常传下去");
-            string run = ExtractMethodBody(source, "public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, int preDelayMilliseconds, Action<string> info, Action<string> warn, out bool userInputSeen)");
+            string run = ExtractMethodBody(source, "public static int TriggerAll(IEnumerable<LockShortcutMapping> mappings, LockShortcutOptions options, Action<string> info, Action<string> warn, out bool userInputSeen)");
             Assert(run.Contains("new RealInputDetector()"), "执行快捷键期间要用真人输入检测器");
             int dispose = run.IndexOf("detector.Dispose();", StringComparison.Ordinal);
             int read = run.IndexOf("userInputSeen = detector.UserInputSeen;", StringComparison.Ordinal);

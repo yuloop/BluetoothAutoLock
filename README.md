@@ -27,6 +27,7 @@ BluetoothAutoLock/
 │   ├── TrayApp.cs           # 托盘图标与右键菜单
 │   ├── SettingsForm.cs      # 配置窗口
 │   ├── BluetoothMonitor.cs  # 轮询与状态机
+│   ├── PresenceReporter.cs  # 在岗上报（可选）：定期 POST 在场/离开状态
 │   ├── LolOptimizer.cs      # LoL 游戏模式 WSL/显示器/远程软件优化
 │   ├── GameEnvironmentOptimizer.cs # 一键游戏环境清理 + 异常监控/AI 分析
 │   ├── Config.cs            # INI 加载/保存（保留注释回写）
@@ -74,6 +75,7 @@ cd D:\xiangmudata\win_bluetooth_auto_scan_lock_on_disconnect
 | **轮询随机下限** | 最小轮询间隔，实际间隔为该值到 +7 秒随机，默认 8 即 8–15 秒 |
 | **手机离开后** | 两个独立开关：**锁定 Windows 屏幕**、**执行锁屏快捷键**（如锁定微信/QQ），可以只开一个，也可以都开 |
 | **锁屏快捷键** | 手机离开后按顺序执行。每行可设前置快捷键（如 `Ctrl+Alt+W` 叫出微信）、快捷键（如 `Ctrl+L`）、目标程序（按住 ⊕ 拖到程序窗口上）和备注；选中一行可修改。点进快捷键框（变浅黄）录制时，会先拦下其他程序的同名全局快捷键 |
+| **锁完隐藏窗口** | 勾上后，每行锁完会再按一次该行的前置快捷键（= 该程序显示/隐藏主窗口的全局热键，如微信 `Ctrl+Alt+W`、QQ `Ctrl+Alt+Shift+Q`），把刚锁上的窗口收起来。前置键是切换键，按下去是藏还是叫出来取决于窗口状态，所以只在**有把握**时才按：该行必须填了目标程序，而且按完锁定键后这个程序确实还在最前面；拿不准就跳过并记一行日志（宁可窗口留在桌面上，也不把它重新叫出来） |
 | **日志级别** | `Debug` / `Info` / `Warn` / `Error` |
 | **日志路径** | 日志文件位置，父目录自动创建 |
 | **LoL 游戏优化** | 可选：检测到 LoL 启动时，游戏前一次性回收 WSL 缓存、可选禁用虚拟显示器、可选关闭 AskLink / ToDesk，游戏静默 10 分钟后静默恢复 |
@@ -107,6 +109,9 @@ cd D:\xiangmudata\win_bluetooth_auto_scan_lock_on_disconnect
 | `LockShortcutsEnabled` | `true` | 手机离开后执行锁屏快捷键；不锁屏时只执行一次，等键鼠有真实输入后才重新监控 |
 | `LockShortcutPreDelayMilliseconds` | `1000` | 按完前置快捷键后，等多久再按快捷键 0–10000 |
 | `LockShortcutSettleMilliseconds` | `3000` | 同时开启锁屏时，按完快捷键等多久再锁屏 0–10000 |
+| `LockShortcutHideAfterwards` | `false` | 锁完每一行后，再按一次该行的前置快捷键（= 该程序显示/隐藏窗口的全局热键），把刚锁上的窗口隐藏起来。只在“填了目标程序且它按完锁定键后仍在最前面”时才按；按完会确认窗口真的藏住了，**热键没效果就自己 `SW_HIDE` 兜底**（168 实测 QQ 的热键既叫不出也收不起来）。日志：`Lock shortcut window hidden: … | hide=pre-hotkey@300ms` 或 `hide=SW_HIDE(ok)…(pre-hotkey had no effect)`；拿不准则 `Lock shortcut hide skipped:` |
+| `LockShortcutPreWaitTimeoutMilliseconds` | `2500` | 按完前置键后，在“前置键后等待”之外最多再等这么久，**等程序自己把窗口显示出来**（只看显示没显示，不管有没有拿到焦点）；超时才用 SW_SHOW 强显（强显后不少程序不认自己的锁定热键）。日志写 `ready=visible@Xms` 或 `ready=timeout(...)` |
+| `LockShortcutHideDelayMilliseconds` | `800` | 按完锁定键后至少等多久才按隐藏键（不隐藏时仍按 300ms 走下一行）。QQ 的锁定比微信慢，值太小会“窗口收了但没锁上” |
 | `LockShortcut1` 等 | _(空)_ | 格式 `前置>快捷键\|备注\|target=程序名`（前置和目标可省略），例如 `Ctrl+Alt+W>Ctrl+L\|锁定微信\|target=Weixin`。目标已在最前面就只按快捷键；否则先按前置快捷键，再把目标窗口还原、切到最前面后按快捷键，切不过去也照样全局按；目标没运行就跳过 |
 | `LolOptimizerEnabled` | `false` | 启用 LoL 游戏模式自动化 |
 | `LolProcessName` | `League of Legends` | LoL 进程名（不含 .exe） |
@@ -131,8 +136,60 @@ cd D:\xiangmudata\win_bluetooth_auto_scan_lock_on_disconnect
 | `GameOptimizerLolRenderCountThreshold` | `2` | `LeagueClientUxRender` 超此数视为残留 |
 | `GameOptimizerToolCleanupProcessNames` | `node,omx-node-stdio-hidden,python` | 一键清理候选进程名 |
 | `GameOptimizerLolCleanupProcessNames` | `LeagueCrashHandler64,LeagueClientUxRender,LeagueClient,League of Legends,RiotClientServices` | LoL 残留清理列表 |
+| `PresenceReportEnabled` | `false` | 启用“在岗上报”：定期把在场/离开状态 POST 到远端接口 |
+| `PresenceReportUrl` | `https://sl.z123j.top:26132/btlock/report` | 上报地址，必须 http/https 绝对地址 |
+| `PresenceReportToken` | _(空)_ | 鉴权令牌，作为 `X-Btlock-Token` 请求头发送；**留空则完全不发送** |
+| `PresenceReportIntervalSeconds` | `20` | 心跳间隔 5–3600 秒 |
+| `PresenceReportTimeoutSeconds` | `5` | 单次请求超时 1–60 秒，超时只记日志 |
 
 图形界面的 **保存** 会保留文件既有注释，手写与 GUI 编辑可共存。
+
+## 在岗上报（Presence reporting，可选）
+
+默认关闭。开启后，程序把本机的“在场 / 离开”状态定期 POST 到远端 HTTP 接口，供外部服务（例如 Linux 侧的通知服务）判断用户是否坐在电脑前。它**只上报状态**，不参与蓝牙匹配、锁屏、快捷键与游戏优化判定。
+
+```ini
+PresenceReportEnabled=false
+PresenceReportUrl=https://sl.z123j.top:26132/btlock/report
+PresenceReportToken=
+PresenceReportIntervalSeconds=20
+PresenceReportTimeoutSeconds=5
+```
+
+- **接口**：`POST <PresenceReportUrl>`，`Content-Type: application/json; charset=utf-8`
+- **鉴权**：请求头 `X-Btlock-Token: <PresenceReportToken>`。**Token 留空时一个字节都不发**，只在日志里记一行 `Presence reporting is idle: the token is empty ...`
+- **频率**：每 `PresenceReportIntervalSeconds` 秒一次 `heartbeat`；状态或 `inRange` 一变就立刻补一份 `change`；启动首份是 `start`，退出前尽力发一份 `stop`
+- **超时**：单次请求 `PresenceReportTimeoutSeconds` 秒。超时或失败只写日志（首次 `[WARN ]`，连续失败降为 `[DEBUG]`），不阻塞监控线程，也不会让程序退出
+- **线程**：上报跑在独立后台线程（`IsBackground = true`）；停止时最多等 2 秒把 `stop` 发出去，绝不拖住退出或监控重启
+- **状态取值**：`present`（手机在附近）/ `away`（已判定离开，或离开动作延后中）/ `unknown`（尚未得出判定，例如空闲未满 30 秒）
+
+请求体字段：
+
+| 字段 | 说明 |
+|------|------|
+| `ts` | UTC 时间，形如 `2026-10-14T00:30:00Z` |
+| `host` | `Environment.MachineName` |
+| `version` | 程序版本，与 `--version` 一致 |
+| `idleSeconds` | 键鼠空闲秒数；读不到时为 `null`（不是 0） |
+| `absentSeconds` | 手机连续离开的秒数；在场时为 `0` |
+| `inRange` | 手机是否在附近（沿用现有 SDP 判定） |
+| `state` | `present` / `away` / `unknown` |
+| `paused` | 离开处理是否已暂停/延后（例如 Windows 已锁屏，快捷键延后执行） |
+| `event` | `start` / `heartbeat` / `change` / `stop` |
+
+在场心跳示例：
+
+```json
+{"ts":"2026-10-14T00:30:00Z","host":"YU-PC","version":"1.1.42","idleSeconds":42,"absentSeconds":0,"inRange":true,"state":"present","paused":false,"event":"heartbeat"}
+```
+
+手机离开示例：
+
+```json
+{"ts":"2026-10-14T00:32:00Z","host":"YU-PC","version":"1.1.42","idleSeconds":95,"absentSeconds":35,"inRange":false,"state":"away","paused":false,"event":"change"}
+```
+
+> `PresenceReportToken` 属于凭据：填了 Token 的 `config.ini` 不要提交到 Git。日志与 `Config.Describe()` 只打印 `token=set` / `token=empty`，从不打印 Token 本身。
 
 ## 安装（开机自启 + 崩溃重启）
 
@@ -199,6 +256,7 @@ Get-Content -Wait 'C:\ProgramData\BluetoothAutoLock\service.log'   # 实时日�
 - 可执行文件 ~90 KB
 - 托盘：2 线程（UI + 监控）；工作集 ~25–30 MB（WinForms 基线）
 - 无网络监听
+- 在岗上报开启时额外 1 个后台线程（默认关闭；上报失败只写日志，不影响锁屏逻辑）
 - 无第三方 DLL — 仅 Win32（`Irprops.cpl`、`kernel32.dll`、`user32.dll`）与 .NET BCL
 
 ## 可靠性特性
