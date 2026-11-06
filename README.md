@@ -45,7 +45,7 @@ BluetoothAutoLock/
 ## 编译
 
 ```cmd
-cd D:\xiangmudata\win_bluetooth_auto_scan_lock_on_disconnect
+REM 在本仓库根目录执行（路径按你自己的克隆位置替换）
 .\scripts\build.cmd
 ```
 
